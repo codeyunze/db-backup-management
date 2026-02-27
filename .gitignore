@@ -34,4 +34,6 @@ htmlcov/
 
 # MySQL 备份数据（不纳入版本控制）
 ./mysql/*
+mysql
 
+.history
