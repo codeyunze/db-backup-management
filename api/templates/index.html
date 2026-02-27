@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MySQL 备份管理</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+            background: #eef0f3;
+            color: #1a1d21;
+            line-height: 1.5;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 24px;
+            color: #0d1117;
+        }
+        .card {
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,.06);
+            margin-bottom: 24px;
+            overflow: hidden;
+        }
+        .card-header {
+            padding: 14px 20px;
+            background: #fafbfc;
+            border-bottom: 1px solid #eaeef2;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        .card-body {
+            padding: 20px;
+        }
+        .form-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        .form-group {
+            flex: 1;
+            min-width: 180px;
+        }
+        .form-group label {
+            display: block;
+            font-size: 0.8rem;
+            color: #57606a;
+            margin-bottom: 4px;
+        }
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #d0d7de;
+            border-radius: 6px;
+            font-size: 0.9rem;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #0969da;
+            box-shadow: 0 0 0 2px rgba(9,105,218,.2);
+        }
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            background: #238636;
+            color: #fff;
+        }
+        .btn:hover { background: #2ea043; }
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        .btn-secondary {
+            background: #6e7681;
+            color: #fff;
+        }
+        .btn-secondary:hover { background: #8b949e; }
+        .btn-danger {
+            background: #da3633;
+        }
+        .btn-danger:hover { background: #f85149; }
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            z-index: 1000;
+            animation: slideIn 0.3s ease;
+        }
+        .toast.success { background: #1a7f37; color: #fff; }
+        .toast.error { background: #cf222e; color: #fff; }
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        #backup-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+        th, td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid #eaeef2;
+        }
+        th {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #57606a;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        tr:hover { background: #f6f8fa; }
+        .size { font-family: monospace; font-size: 0.85rem; }
+        .col-db {
+            width: 210px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .dir-name {
+            width: 250px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .col-time {
+            width: 165px;
+            white-space: nowrap;
+        }
+        .col-size {
+            width: 100px;
+        }
+        .col-actions {
+            width: 280px;
+            white-space: nowrap;
+        }
+        .empty-state {
+            padding: 40px;
+            text-align: center;
+            color: #8c959f;
+            font-size: 0.9rem;
+        }
+        .actions { display: flex; gap: 8px; align-items: center; }
+        .expandable {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.2s ease;
+        }
+        .expandable.show { max-height: 500px; }
+        pre {
+            background: #f6f8fa;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            overflow-x: auto;
+            margin-top: 8px;
+        }
+        .btn-sm {
+            padding: 4px 10px;
+            font-size: 0.8rem;
+        }
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 999;
+            padding: 20px;
+        }
+        .modal {
+            background: #fff;
+            border-radius: 8px;
+            max-width: 700px;
+            width: 100%;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 8px 24px rgba(0,0,0,.15);
+        }
+        .modal-header {
+            padding: 14px 20px;
+            border-bottom: 1px solid #eaeef2;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .modal-header h3 { font-size: 1rem; }
+        .modal-body {
+            padding: 16px;
+            overflow: auto;
+            flex: 1;
+        }
+        .modal-body pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>MySQL 备份管理</h1>
+
+        <!-- 新建备份 -->
+        <div class="card">
+            <div class="card-header">新建备份</div>
+            <div class="card-body">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>数据库主机 *</label>
+                        <input type="text" id="backup-host" placeholder="127.0.0.1 或 MySQL 容器网络地址" required>
+                    </div>
+                    <div class="form-group" style="min-width: 80px;">
+                        <label>端口</label>
+                        <input type="number" id="backup-port" value="3306">
+                    </div>
+                    <div class="form-group">
+                        <label>用户名 *</label>
+                        <input type="text" id="backup-user" placeholder="root" required>
+                    </div>
+                    <div class="form-group">
+                        <label>密码 *</label>
+                        <input type="password" id="backup-password" placeholder="密码" required>
+                    </div>
+                    <div class="form-group">
+                        <label>数据库名 *</label>
+                        <input type="text" id="backup-database" placeholder="mall" required>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:2;">
+                        <label>仅备份指定表</label>
+                        <input type="text" id="backup-tables" placeholder="如 user,order 多个表用逗号分隔，留空=全部">
+                    </div>
+                    <div class="form-group" style="flex:2;">
+                        <label>不备份的表</label>
+                        <input type="text" id="backup-ignore" placeholder="如 order_log 多个表用逗号分隔，留空=无">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="min-width: 80px; max-width: 180px;">
+                        <label>清理旧备份（天）（0=不清理）</label>
+                        <input type="number" id="backup-clean" value="0" min="0" placeholder="0=不清理">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group actions">
+                        <button class="btn btn-secondary" id="btn-test-backup" onclick="testConnectionBackup()">测试连接</button>
+                        <button class="btn" id="btn-backup" onclick="doBackup()">执行备份</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 数据还原 -->
+        <div class="card">
+            <div class="card-header">数据还原</div>
+            <div class="card-body">
+                <div class="form-row">
+                    <div class="form-group" style="flex:2;">
+                        <label>选择备份目录 *</label>
+                        <select id="restore-backup-dir">
+                            <option value="">-- 请选择或从下方列表获取 --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>目标数据库名 *</label>
+                        <input type="text" id="restore-target-db" placeholder="还原到的数据库名">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:2;">
+                        <label>仅恢复指定表</label>
+                        <input type="text" id="restore-tables" placeholder="如 user,order 多个表用逗号分隔，留空=全部">
+                    </div>
+                    <div class="form-group" style="flex:2;">
+                        <label>不恢复的表</label>
+                        <input type="text" id="restore-ignore" placeholder="如 order_log 多个表用逗号分隔，留空=无">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:2;">
+                        <label>覆盖的表（先 DROP 再恢复）</label>
+                        <input type="text" id="restore-overwrite" placeholder="如 user 多个表用逗号分隔，留空=已存在则跳过">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>目标主机 *</label>
+                        <input type="text" id="restore-host" placeholder="127.0.0.1">
+                    </div>
+                    <div class="form-group" style="min-width: 80px;">
+                        <label>端口</label>
+                        <input type="number" id="restore-port" value="3306">
+                    </div>
+                    <div class="form-group">
+                        <label>用户名 *</label>
+                        <input type="text" id="restore-user" placeholder="root">
+                    </div>
+                    <div class="form-group">
+                        <label>密码 *</label>
+                        <input type="password" id="restore-password" placeholder="密码">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group actions">
+                        <button class="btn btn-secondary" id="btn-test-restore" onclick="testConnectionRestore()">测试连接</button>
+                        <button class="btn btn-danger" id="btn-restore" onclick="doRestore()">执行还原</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 备份列表 -->
+        <div class="card">
+            <div class="card-header">
+                <span>备份列表</span>
+                <span style="float:right;">
+                    <input type="text" id="filter-db" placeholder="按数据库名筛选" style="padding:6px 10px;margin-right:8px;width:140px;">
+                    <button class="btn btn-secondary" onclick="loadBackups()">刷新</button>
+                </span>
+            </div>
+            <div class="card-body">
+                <table id="backup-table">
+                    <thead>
+                        <tr>
+                            <th class="col-db">数据库</th>
+                            <th class="dir-name">目录名</th>
+                            <th class="col-time">备份时间</th>
+                            <th class="col-size">大小</th>
+                            <th class="col-actions">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="backup-tbody"></tbody>
+                </table>
+                <div id="backup-empty" class="empty-state" style="display:none;">暂无备份</div>
+            </div>
+        </div>
+
+        <!-- 日志弹窗 -->
+        <div id="log-modal" class="modal-overlay" style="display:none;">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3 id="log-modal-title">备份日志</h3>
+                    <button class="btn btn-secondary btn-sm" onclick="closeLogModal()">关闭</button>
+                </div>
+                <div class="modal-body">
+                    <pre id="log-content"></pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- 备份表列表弹窗 -->
+        <div id="tables-modal" class="modal-overlay" style="display:none;">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3 id="tables-modal-title">备份的表</h3>
+                    <button class="btn btn-secondary btn-sm" onclick="closeTablesModal()">关闭</button>
+                </div>
+                <div class="modal-body">
+                    <div id="tables-content"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API = '';
+
+        function toast(msg, type) {
+            const el = document.createElement('div');
+            el.className = 'toast ' + (type || 'success');
+            el.textContent = msg;
+            document.body.appendChild(el);
+            setTimeout(() => el.remove(), 4000);
+        }
+
+        function fmtSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+        }
+
+        async function loadBackups() {
+            const filter = document.getElementById('filter-db').value.trim();
+            const url = filter ? '/db/backups?database=' + encodeURIComponent(filter) : '/db/backups';
+            try {
+                const r = await fetch(url);
+                const j = await r.json();
+                const items = (j.data && (j.data.items || j.data.list || [])) || [];
+                const tbody = document.getElementById('backup-tbody');
+                const empty = document.getElementById('backup-empty');
+                const sel = document.getElementById('restore-backup-dir');
+
+                tbody.innerHTML = '';
+                sel.innerHTML = '<option value="">-- 请选择 --</option>';
+                items.forEach(it => {
+                    const tr = document.createElement('tr');
+                    const esc = s => ('' + s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+                    const ops = '<td class="actions col-actions"><button class="btn btn-secondary btn-sm btn-log" data-dir="' + esc(it.dirName) + '" data-type="backup">备份日志</button><button class="btn btn-secondary btn-sm btn-log" data-dir="' + esc(it.dirName) + '" data-type="restore">还原日志</button><button class="btn btn-secondary btn-sm btn-tables" data-dir="' + esc(it.dirName) + '">查看表</button><button class="btn btn-danger btn-sm btn-del" data-dir="' + esc(it.dirName) + '">删除</button></td>';
+                    tr.innerHTML = '<td class="col-db" title="' + esc(it.database) + '">' + esc(it.database) + '</td><td class="size dir-name" title="' + esc(it.dirName) + '">' + esc(it.dirName) + '</td><td class="col-time">' + esc(it.backupTime) + '</td><td class="col-size">' + fmtSize(it.size) + '</td>' + ops;
+                    tbody.appendChild(tr);
+                    const opt = document.createElement('option');
+                    opt.value = it.backupDir;
+                    opt.textContent = it.dirName + ' (' + it.backupTime + ')';
+                    sel.appendChild(opt);
+                });
+                empty.style.display = items.length ? 'none' : 'block';
+                tbody.querySelectorAll('.btn-log').forEach(btn => {
+                    btn.onclick = () => showLog(btn.dataset.dir, btn.dataset.type);
+                });
+                tbody.querySelectorAll('.btn-tables').forEach(btn => {
+                    btn.onclick = () => showTables(btn.dataset.dir);
+                });
+                tbody.querySelectorAll('.btn-del').forEach(btn => {
+                    btn.onclick = () => doDelete(btn.dataset.dir);
+                });
+            } catch (e) {
+                toast('获取备份列表失败: ' + e.message, 'error');
+            }
+        }
+
+        async function testConnectionBackup() {
+            const host = document.getElementById('backup-host').value.trim();
+            const user = document.getElementById('backup-user').value.trim();
+            const password = document.getElementById('backup-password').value;
+            const database = document.getElementById('backup-database').value.trim();
+            if (!host || !user || !database) {
+                toast('请填写主机、用户名、数据库名', 'error');
+                return;
+            }
+            const btn = document.getElementById('btn-test-backup');
+            btn.disabled = true;
+            btn.textContent = '测试中...';
+            try {
+                const r = await fetch('/db/test-connection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        host,
+                        port: document.getElementById('backup-port').value || '3306',
+                        user,
+                        password,
+                        database
+                    })
+                });
+                const j = await r.json();
+                if (j.code === 200) {
+                    toast(j.msg || '连接成功');
+                } else {
+                    toast(j.msg || '连接失败', 'error');
+                }
+            } catch (e) {
+                toast('请求失败: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '测试连接';
+            }
+        }
+
+        async function testConnectionRestore() {
+            const host = document.getElementById('restore-host').value.trim();
+            const user = document.getElementById('restore-user').value.trim();
+            const password = document.getElementById('restore-password').value;
+            if (!host || !user) {
+                toast('请填写主机、用户名', 'error');
+                return;
+            }
+            const btn = document.getElementById('btn-test-restore');
+            btn.disabled = true;
+            btn.textContent = '测试中...';
+            try {
+                const r = await fetch('/db/test-connection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        host,
+                        port: document.getElementById('restore-port').value || '3306',
+                        user,
+                        password,
+                        database: document.getElementById('restore-target-db').value.trim() || undefined
+                    })
+                });
+                const j = await r.json();
+                if (j.code === 200) {
+                    toast(j.msg || '连接成功');
+                } else {
+                    toast(j.msg || '连接失败', 'error');
+                }
+            } catch (e) {
+                toast('请求失败: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '测试连接';
+            }
+        }
+
+        async function doBackup() {
+            const host = document.getElementById('backup-host').value.trim();
+            const user = document.getElementById('backup-user').value.trim();
+            const password = document.getElementById('backup-password').value;
+            const database = document.getElementById('backup-database').value.trim();
+            if (!host || !user || !password || !database) {
+                toast('请填写主机、用户名、密码、数据库名', 'error');
+                return;
+            }
+            const btn = document.getElementById('btn-backup');
+            btn.disabled = true;
+            btn.textContent = '备份中...';
+            const body = {
+                host,
+                port: document.getElementById('backup-port').value || '3306',
+                user,
+                password,
+                database,
+                clean_days: parseInt(document.getElementById('backup-clean').value) || 0
+            };
+            const tables = document.getElementById('backup-tables').value.trim();
+            const ignore = document.getElementById('backup-ignore').value.trim();
+            if (tables) body.tables = tables;
+            if (ignore) body.ignore_tables = ignore;
+            try {
+                const r = await fetch('/db/backup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const j = await r.json();
+                if (j.code === 200) {
+                    toast('备份成功');
+                    loadBackups();
+                } else {
+                    toast('备份失败: ' + (j.msg || j.data?.stderr || ''), 'error');
+                }
+            } catch (e) {
+                toast('请求失败: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '执行备份';
+            }
+        }
+
+        async function doDelete(dirName) {
+            if (!confirm('确定要删除备份 "' + dirName + '" 吗？此操作不可恢复。')) return;
+            try {
+                const r = await fetch('/db/backups/' + encodeURIComponent(dirName), { method: 'DELETE' });
+                const j = await r.json();
+                if (j.code === 200) {
+                    toast('删除成功');
+                    loadBackups();
+                } else {
+                    toast('删除失败: ' + (j.msg || '未知错误'), 'error');
+                }
+            } catch (e) {
+                toast('请求失败: ' + e.message, 'error');
+            }
+        }
+
+        async function doRestore() {
+            const backupDir = document.getElementById('restore-backup-dir').value;
+            const targetDb = document.getElementById('restore-target-db').value.trim();
+            const host = document.getElementById('restore-host').value.trim();
+            const user = document.getElementById('restore-user').value.trim();
+            const password = document.getElementById('restore-password').value;
+            if (!backupDir || !targetDb || !host || !user || !password) {
+                toast('请填写完整还原信息', 'error');
+                return;
+            }
+            if (!confirm('确定要还原到数据库 "' + targetDb + '" 吗？此操作可能覆盖现有数据。')) return;
+            const btn = document.getElementById('btn-restore');
+            btn.disabled = true;
+            btn.textContent = '还原中...';
+            const body = {
+                backup_dir: backupDir,
+                target_db: targetDb,
+                host,
+                port: document.getElementById('restore-port').value || '3306',
+                user,
+                password
+            };
+            const tables = document.getElementById('restore-tables').value.trim();
+            const ignore = document.getElementById('restore-ignore').value.trim();
+            const overwrite = document.getElementById('restore-overwrite').value.trim();
+            if (tables) body.tables = tables;
+            if (ignore) body.ignore_tables = ignore;
+            if (overwrite) body.overwrite_tables = overwrite;
+            try {
+                const r = await fetch('/db/restore', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const j = await r.json();
+                if (j.code === 200) {
+                    toast('还原成功');
+                } else {
+                    toast('还原失败: ' + (j.msg || j.data?.stderr || ''), 'error');
+                }
+            } catch (e) {
+                toast('请求失败: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '执行还原';
+            }
+        }
+
+        document.getElementById('filter-db').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') loadBackups();
+        });
+
+        let logPollTimer = null;
+        function showLog(dirName, type) {
+            const modal = document.getElementById('log-modal');
+            const title = document.getElementById('log-modal-title');
+            const content = document.getElementById('log-content');
+            title.textContent = type === 'backup' ? dirName + ' - 备份日志' : dirName + ' - 还原日志';
+            modal.style.display = 'flex';
+            content.textContent = '加载中...';
+
+            async function poll() {
+                try {
+                    const r = await fetch('/db/backups/' + encodeURIComponent(dirName) + '/log?type=' + type);
+                    const j = await r.json();
+                    if (j.code === 200 && j.data) {
+                        content.textContent = j.data.content || '(空)';
+                        content.scrollTop = content.scrollHeight;
+                    } else {
+                        content.textContent = '加载失败: ' + (j.msg || '未知错误');
+                    }
+                } catch (e) {
+                    content.textContent = '请求失败: ' + e.message;
+                }
+            }
+
+            poll();
+            if (logPollTimer) clearInterval(logPollTimer);
+            logPollTimer = setInterval(poll, 2000);
+        }
+
+        function closeLogModal() {
+            document.getElementById('log-modal').style.display = 'none';
+            if (logPollTimer) {
+                clearInterval(logPollTimer);
+                logPollTimer = null;
+            }
+        }
+
+        document.getElementById('log-modal').addEventListener('click', (e) => {
+            if (e.target === document.getElementById('log-modal')) closeLogModal();
+        });
+
+        async function showTables(dirName) {
+            const modal = document.getElementById('tables-modal');
+            const title = document.getElementById('tables-modal-title');
+            const content = document.getElementById('tables-content');
+            title.textContent = dirName + ' - 备份的表';
+            modal.style.display = 'flex';
+            content.innerHTML = '<p style="color:#8c959f">加载中...</p>';
+            try {
+                const r = await fetch('/db/backups/' + encodeURIComponent(dirName) + '/tables');
+                const j = await r.json();
+                if (j.code === 200 && j.data) {
+                    const tables = j.data.tables || [];
+                    const views = j.data.views || [];
+                    const esc = s => ('' + s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+                    if (tables.length === 0 && views.length === 0) {
+                        content.innerHTML = '<p style="color:#8c959f">暂无表或视图</p>';
+                    } else {
+                        let html = '';
+                        if (tables.length > 0) {
+                            html += '<p style="margin-bottom:8px;font-weight:600">基表 (' + tables.length + '):</p>';
+                            html += '<div style="display:grid;grid-template-columns:1fr 1fr;column-gap:24px;row-gap:4px;font-family:monospace;font-size:0.85rem;line-height:1.6;word-break:break-all">'
+                                + tables.map(t => '<div>' + esc(t) + '</div>').join('') + '</div>';
+                        }
+                        if (views.length > 0) {
+                            html += '<p style="margin:16px 0 8px;font-weight:600">视图 (' + views.length + '):</p>';
+                            html += '<div style="display:grid;grid-template-columns:1fr 1fr;column-gap:24px;row-gap:4px;font-family:monospace;font-size:0.85rem;line-height:1.6;word-break:break-all">'
+                                + views.map(v => '<div>' + esc(v) + '</div>').join('') + '</div>';
+                        }
+                        content.innerHTML = html;
+                    }
+                } else {
+                    content.innerHTML = '<p style="color:#cf222e">加载失败: ' + (j.msg || '未知错误') + '</p>';
+                }
+            } catch (e) {
+                content.innerHTML = '<p style="color:#cf222e">请求失败: ' + e.message + '</p>';
+            }
+        }
+
+        function closeTablesModal() {
+            document.getElementById('tables-modal').style.display = 'none';
+        }
+
+        document.getElementById('tables-modal').addEventListener('click', (e) => {
+            if (e.target === document.getElementById('tables-modal')) closeTablesModal();
+        });
+
+        loadBackups();
+    </script>
+</body>
+</html>
