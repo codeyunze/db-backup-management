@@ -28,13 +28,16 @@ docker build --build-arg APT_MIRROR=tsinghua -t db-backup-management:latest .
 | `/scripts` | 备份与还原脚本，可挂载宿主机脚本覆盖镜像内默认脚本 |
 | `/data/backup/mysql` | 备份文件存储目录，建议挂载宿主机目录持久化 |
 
-## 运行 API 服务
+## 运行服务
 
-默认启动 Flask API，对外提供备份与还原接口：
+对外提供备份与还原接口，以及可视化界面：
 
 ```bash
 docker run -d -p 8081:8081 -v /宿主机/备份目录:/data/backup/mysql --name db-backup db-backup-management:latest
 ```
+
+启动后，访问 `http://localhost:8081/` 即可使用Web可视化管理界面。
+
 
 ### Web 管理界面
 
