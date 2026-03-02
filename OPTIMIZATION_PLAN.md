@@ -35,3 +35,117 @@
   - 文档中明确说明：在多环境（测试/生产）间迁移时，routine 会随数据结构一并迁移。
   - 可选：提供单独只导出/导入 routines 的模式，方便独立迁移或排错。
 
+### 3. 基于 binlog 的增量备份（按“单表全量快照”记录位点）
+
+- **目标**：
+  - 在现有“全量备份（schema/ + data/）”基础上，增加 **真正意义上的数据库增量备份** 能力：
+    - 全量备份：作为基线快照；
+    - 增量备份：记录“上一次备份后到现在”的所有 DML 变更（INSERT/UPDATE/DELETE），基于 MySQL binlog。
+
+- **前置条件**：
+  - MySQL 已开启 binlog，且推荐使用 `ROW` 模式；
+  - 备份账号具备访问 binlog 的权限（通常需要 `REPLICATION SLAVE` 或等价权限）；
+  - 可以稳定保存足够时间范围内的 binlog（`expire_logs_days` 或 `binlog_expire_logs_seconds` 需与备份策略匹配）。
+
+==> **特别说明：本工具的“全量备份”是“按表全量”，而不是一次性全库快照**。  
+即：每个数据表在自己的 `mysqldump --single-transaction` 一致性快照事务里备份完毕，因此 **每张表的快照时间点并不完全相同** ，需要分别记录各自的 binlog 节点。
+
+- **总体设计**：
+  1. **单表全量备份时记录该表的快照位点**  
+     - 在备份脚本中（`scripts/mysql-backup-schema-data.sh`），当前每张表是单独调用 `mysqldump --single-transaction` 进行“单表快照”备份；
+     - 计划在 **每次对某张表执行 `mysqldump` 之前** ，在同一连接 / 同一事务上下文内先记录一次 binlog 位点，以保证：
+       - “该表快照视图”与“记录的 binlog 位点”是同一时间点的视图；
+       - 后续增量可以**针对每张表，从各自的快照位点开始补齐变更**。
+     - 元数据记录结构示例（按表维度）：
+       - 在备份目录下新增 `meta/tables-binlog.json`（或每表一个独立文件），例如：
+         ```json
+         {
+           "user": {
+             "binlog_file": "mysql-bin.000123",
+             "binlog_pos": 456789,
+             "recorded_at": "2026-02-27T14:30:00+08:00"
+           },
+           "order": {
+             "binlog_file": "mysql-bin.000124",
+             "binlog_pos": 123456,
+             "recorded_at": "2026-02-27T14:31:10+08:00"
+           }
+         }
+         ```
+       - 这样可以精确表达“每张表完成全量快照时对应的 binlog 起点”，后续增量备份脚本可**按表**计算需要回放的变更范围。
+  2. **增量备份脚本（新增一个脚本）**  
+     - 新增 `scripts/mysql-backup-incremental.sh`（仅设计，不立即实现），职责：
+       - 读取最近一次“已完成”的全量备份目录或上一次增量的位点元数据；
+       - 调用 `mysqlbinlog` 从指定起点位点提取 binlog 变更；
+       - 输出增量备份文件（建议放在独立目录），并记录新的位点。
+     - 目录结构示例：
+       - `incremental/`
+         - `<db>_inc_YYYYMMDD_HHMMSS/`
+           - `changes.sql`（或按大小/时间切分为多个：`changes_0001.sql` 等）
+           - `meta/`
+             - `binlog_from.json`（起始位点）
+             - `binlog_to.json`（结束位点）
+     - `mysqlbinlog` 调用形态示例（单实例）：
+       ```bash
+       mysqlbinlog \
+         --read-from-remote-server \
+         --host=DB_HOST --port=DB_PORT --user=DB_USER --password=DB_PASS \
+         --raw=false --verbose \
+         --start-position=起始Pos \
+         --stop-datetime='截止时间（可选）' \
+         binlog_file_name > changes.sql
+       ```
+     - 需要考虑：
+       - 如跨多个 binlog 文件，则根据起止 file/position 依次提取；
+       - 可按数据库过滤：`--database=${DB_NAME}`，避免导出无关库的变更；
+       - 可配置“最大增量时间窗口/文件大小”，超出则切分为多个增量批次。
+  3. **增量备份与全量备份的关联**  
+     - 在每个增量目录的 `meta/binlog_from.json` 中，记录它依赖的“前置快照”信息：
+       ```json
+       {
+         "from_binlog_file": "mysql-bin.000123",
+         "from_binlog_pos": 456789,
+         "base_full_backup_dir": "mysql/<db>_20260227_143000",
+         "base_type": "full"   // 或 future: differential
+       }
+       ```
+     - 这样在恢复时可以通过：
+       - 目标时间点 → 选最近一次早于该时间的全量备份；
+       - 再选择从该全量起到目标时间点之间的若干增量目录，按顺序回放。
+
+- **恢复设计**：
+  1. **扩展现有还原脚本或新增增量还原脚本**  
+     - 现有 `scripts/mysql-restore-schema-data.sh` 负责**全量恢复**（schema + data）；  
+     - 计划新增 `scripts/mysql-restore-incremental.sh` 或在现有脚本中增加“应用增量”的子命令：
+       - 输入：
+         - 基线全量备份目录；
+         - 一个或多个增量目录（按时间顺序）；
+         - 可选目标时间（仅回放到某时间点，需要 `--stop-datetime`）。
+       - 核心步骤：
+         1. 调用现有全量还原脚本，将基线恢复到目标数据库（新库或覆盖库）；
+         2. 对每个增量目录，依次执行：
+            - `mysql < changes.sql`（或多个切分文件），按顺序回放；
+         3. 若需要“恢复到某一时间点”，则在生成增量时就基于 `--stop-datetime` 切割，或在恢复时使用 `mysqlbinlog` 的时间过滤（需更复杂逻辑）。
+  2. **注意事项**：
+     - 回放顺序必须严格按照时间（或位点）排序，不能乱序；
+     - 如果有跨库事务，使用 `--database=${DB_NAME}` 时可能丢失一部分跨库逻辑，需要在文档里说明此限制；
+     - 恢复目标库前，需确认与原库的 `server_id`、`GTID`（如开启）等配置不会导致主从复制混淆（建议在“离线恢复库”里执行）。
+
+- **Web / API 层面的预留设计**：
+  - 在 HTTP API 中为增量备份预留接口：
+    - `POST /db/backup-incremental`：基于某数据库 + 某一次全量备份执行一次 binlog 增量备份（请求体中必须携带“所属全量备份目录/ID”）；
+    - `GET /db/incrementals`：基于**指定的全量备份**查询其后续增量备份列表（请求必须包含 fullBackupId/fullBackupDir 条件，只返回该全量备份链路上的增量，避免跨基线混用）；
+  - Web 界面：
+    - 在“备份列表”中为某条全量备份展示其后续增量链；
+    - 在“数据还原”界面增加选项：“恢复到某时间点（使用全量 + 增量）”。
+
+- **风险与限制说明**：
+  - 增量备份强依赖 binlog 的完整性与保留时间：
+    - 若 binlog 已被清理（过期），早期的增量将无法再生成/验证；
+  - 对于高写入压力的实例，`mysqlbinlog` 远程拉取会增加一定流量开销，需要评估带宽；
+  - 若未来启用 GTID，则可考虑基于 GTID 集合做更精细的增量/恢复控制（当前设计以 file/position 为主）。
+  - **删除行为约束**：删除全量备份前，必须检查是否存在“依赖该全量备份”的增量备份目录：
+    - 若存在增量备份，应在 Web / API 层给出明确提示：“删除该全量备份将同时删除关联的所有增量备份”；
+    - 删除操作应同时级联清理这些增量目录，避免遗留“失去基线的孤立增量备份”，并在日志中记录具体被删除的全量/增量列表。
+
+

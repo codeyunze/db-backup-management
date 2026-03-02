@@ -4,7 +4,42 @@
 
 ![image-20260227143620819](images/image-20260227143620819.png)
 
-## 构建镜像
+
+## 运行服务
+
+对外提供备份与还原接口，以及可视化界面。
+
+你可以直接拉取已经构建好的镜像：
+
+```bash
+# 从 Docker Hub 拉取
+docker pull codeyunze/db-backup-management:latest
+
+# 从阿里云 ACR 拉取
+docker pull registry.cn-guangzhou.aliyuncs.com/devyunze/db-backup-management:latest
+```
+
+运行容器示例（任选其一镜像地址）：
+
+```bash
+docker run -d -p 8081:8081 \
+  -v /宿主机/备份目录:/data/backup/mysql \
+  --name db-backup \
+  codeyunze/db-backup-management:latest
+```
+
+启动后，访问 `http://localhost:8081/` 即可使用 Web 可视化管理界面。
+
+
+### Web 管理界面
+
+访问 `http://localhost:8081/` 可使用可视化界面：
+- **新建备份**：填写数据库连接信息后执行备份
+- **备份列表**：查看已有备份，支持按数据库名筛选
+- **数据还原**：选择备份目录并填写目标数据库连接信息后执行还原
+
+
+## 自行构建镜像
 
 ```bash
 cd db-backup-management
@@ -27,24 +62,6 @@ docker build --build-arg APT_MIRROR=tsinghua -t db-backup-management:latest .
 |---------|------|
 | `/scripts` | 备份与还原脚本，可挂载宿主机脚本覆盖镜像内默认脚本 |
 | `/data/backup/mysql` | 备份文件存储目录，建议挂载宿主机目录持久化 |
-
-## 运行服务
-
-对外提供备份与还原接口，以及可视化界面：
-
-```bash
-docker run -d -p 8081:8081 -v /宿主机/备份目录:/data/backup/mysql --name db-backup db-backup-management:latest
-```
-
-启动后，访问 `http://localhost:8081/` 即可使用Web可视化管理界面。
-
-
-### Web 管理界面
-
-访问 `http://localhost:8081/` 可使用可视化界面：
-- **新建备份**：填写数据库连接信息后执行备份
-- **备份列表**：查看已有备份，支持按数据库名筛选
-- **数据还原**：选择备份目录并填写目标数据库连接信息后执行还原
 
 ### HTTP 接口
 

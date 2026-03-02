@@ -79,9 +79,34 @@
 
 ## 镜像构建与部署运行
 
-### 构建镜像
+### 优先方式：直接拉取已发布镜像
 
-该工具提供了Docker镜像构建支持，内置了mysql、mysqldump和Python3，方便在任何环境中快速部署：
+推荐直接使用已发布的多架构镜像（同时支持 amd64 / arm64），无需本地构建：
+
+```bash
+# 从 Docker Hub 拉取
+docker pull codeyunze/db-backup-management:latest
+
+# 从阿里云 ACR 拉取（国内网络更友好）
+docker pull registry.cn-guangzhou.aliyuncs.com/devyunze/db-backup-management:latest
+```
+
+运行服务示例（任选其一镜像地址）：
+
+```bash
+docker run -d -p 8081:8081 \
+  -v /宿主机/备份目录:/data/backup/mysql \
+  --name db-backup \
+  codeyunze/db-backup-management:latest
+```
+
+启动后，访问 `http://localhost:8081/` 即可使用 Web 可视化管理界面。
+
+### 如需自行构建镜像
+
+该工具也支持本地构建 Docker 镜像，内置 mysql、mysqldump 和 Python3，方便在任何环境中快速部署：
+
+拉取代码到本地，代码地址: https://github.com/codeyunze/db-backup-management.git
 
 ```bash
 cd db-backup-management
@@ -104,15 +129,18 @@ docker build --build-arg APT_MIRROR=tsinghua -t db-backup-management:latest .
 |---------|------|
 | `/data/backup/mysql` | 备份文件存储目录，建议挂载宿主机目录持久化 |
 
-### 运行服务
+### 运行服务（本地构建镜像方式）
 
-对外提供备份与还原接口，以及可视化界面：
+如果选择本地构建镜像，可使用以下命令运行服务：
 
 ```bash
-docker run -d -p 8081:8081 -v /宿主机/备份目录:/data/backup/mysql --name db-backup db-backup-management:latest
+docker run -d -p 8081:8081 \
+  -v /宿主机/备份目录:/data/backup/mysql \
+  --name db-backup \
+  db-backup-management:latest
 ```
 
-启动后，访问 `http://localhost:8081/` 即可使用Web可视化管理界面。
+启动后，访问 `http://localhost:8081/` 即可使用 Web 可视化管理界面。
 
 ## 核心亮点
 
