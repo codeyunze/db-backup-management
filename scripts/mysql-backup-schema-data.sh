@@ -137,7 +137,7 @@ if [ ! -d "${BACKUP_ROOT}" ]; then
     exit 1
 fi
 
-mkdir -p "${BACKUP_DIR}/schema" "${BACKUP_DIR}/data"
+mkdir -p "${BACKUP_DIR}/schema" "${BACKUP_DIR}/data" "${BACKUP_DIR}/meta"
 [ -z "${LOG_FILE}" ] && LOG_FILE="${BACKUP_DIR}/backup.log"
 rotate_log_if_needed "${LOG_FILE}"
 exec > >(tee -a "${LOG_FILE}") 2>&1
@@ -153,6 +153,35 @@ if [ -z "${ALL_BASE_TABLES}" ] && [ -z "${ALL_VIEWS}" ]; then
     echo "错误: 无法从数据库 '${DB_NAME}' 获取表/视图列表。请检查配置。"
     exit 1
 fi
+
+# 为后续 binlog 增量备份预留：记录每张表在其全量快照时对应的 binlog 位点
+BINLOG_META_TMP="${BACKUP_DIR}/meta/.tables-binlog.tmp"
+echo "{" > "${BINLOG_META_TMP}"
+BINLOG_META_FIRST=1
+
+record_table_binlog_meta() {
+    local tbl="$1"
+    local tmp_dump="${BACKUP_DIR}/meta/.binlog_probe_${tbl}.$$.sql"
+    local file pos
+    # 使用 mysqldump 针对单表做一次空数据的一致性快照，依靠 --master-data=2 在同一快照事务内记录 binlog 位点
+    mysqldump -h"${DB_HOST}" -P"${DB_PORT}" -u"${DB_USER}" -p"${DB_PASS}" \
+      --single-transaction --master-data=2 --no-create-info --skip-triggers --skip-comments \
+      "${DB_NAME}" "${tbl}" --where="1=0" > "${tmp_dump}" 2>/dev/null || return 0
+    # 从注释中的 CHANGE MASTER TO 语句提取 MASTER_LOG_FILE 与 MASTER_LOG_POS
+    read file pos <<EOF
+$(sed -n "s/^-- CHANGE MASTER TO MASTER_LOG_FILE='\\([^']*\\)', MASTER_LOG_POS=\\([0-9]*\\).*$/\\1 \\2/p" "${tmp_dump}" | head -n1)
+EOF
+    rm -f "${tmp_dump}"
+    [ -z "${file}" ] || [ -z "${pos}" ] && return 0
+    # 追加到临时 JSON 中（补充记录快照时间，便于人类查看与增量调试）
+    local ts
+    ts=$(date '+%Y-%m-%dT%H:%M:%S%z')
+    if [ "${BINLOG_META_FIRST}" -eq 0 ]; then
+        echo "," >> "${BINLOG_META_TMP}"
+    fi
+    BINLOG_META_FIRST=0
+    printf '  "%s": { "binlog_file": "%s", "binlog_pos": %s, "recorded_at": "%s" }\n' "${tbl}" "${file}" "${pos}" "${ts}" >> "${BINLOG_META_TMP}"
+}
 
 # 通用的 -t/-i 过滤函数
 filter_objects() {
@@ -232,6 +261,8 @@ fi
 # 3. 备份每个基表的数据 (不含结构)，大表拆分为多个 sql
 echo "正在备份表数据..."
 for TABLE in ${TABLES}; do
+    # 先记录该表对应的一致性快照 binlog 位点（为空数据探测，不影响实际备份文件）
+    record_table_binlog_meta "${TABLE}"
     # 获取表行数（InnoDB 为估计值，用于判断是否拆分）
     ROW_COUNT=$(${MYSQL_CMD} -e "SELECT TABLE_ROWS FROM information_schema.TABLES WHERE TABLE_SCHEMA='${DB_NAME}' AND TABLE_NAME='${TABLE}';" 2>/dev/null) || echo "0"
     ROW_COUNT=${ROW_COUNT:-0}
@@ -327,6 +358,12 @@ for TABLE in ${TABLES}; do
         echo "${TABLE}_*.sql" > "${BACKUP_DIR}/data/.${TABLE}.split"
     fi
 done
+
+# 若已收集到表级 binlog 元数据，写入最终 JSON 文件
+if [ -f "${BINLOG_META_TMP}" ]; then
+    echo "}" >> "${BINLOG_META_TMP}"
+    mv "${BINLOG_META_TMP}" "${BACKUP_DIR}/meta/tables-binlog.json"
+fi
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 备份完成！"
 echo "备份目录: ${BACKUP_DIR}"
