@@ -123,11 +123,12 @@ BACKUP_DIR="${BACKUP_ROOT}/${DB_NAME}_$(date +%Y%m%d_%H%M%S)"
 # =============== 脚本主体 ===============
 set -e
 
-# MYSQL_CMD：默认加 -N（不输出列名），用于各种 COUNT/SELECT 等内部查询
+# MYSQL_CMD：默认加 -N（不输出列名），用于各种 COUNT/SELECT 等内部查询（使用镜像内的 MySQL 官方客户端）
 MYSQL_CMD="mysql -h${DB_HOST} -P${DB_PORT} -u${DB_USER} -p${DB_PASS} -N"
 # MYSQL_CMD_VIEW：保留列名，用于 SHOW CREATE VIEW \G，便于通过列名提取定义
 MYSQL_CMD_VIEW="mysql -h${DB_HOST} -P${DB_PORT} -u${DB_USER} -p${DB_PASS}"
 
+# DUMP_CMD：使用镜像内的 MySQL 官方 mysqldump
 DUMP_CMD="mysqldump -h${DB_HOST} -P${DB_PORT} -u${DB_USER} -p${DB_PASS} \
           --skip-comments --skip-add-drop-table --skip-triggers --single-transaction --quick"
 
@@ -142,6 +143,8 @@ mkdir -p "${BACKUP_DIR}/schema" "${BACKUP_DIR}/data" "${BACKUP_DIR}/meta"
 rotate_log_if_needed "${LOG_FILE}"
 exec > >(tee -a "${LOG_FILE}") 2>&1
 
+echo ""
+echo "======================================================================"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 开始备份数据库: ${DB_NAME}"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 日志文件: ${LOG_FILE}"
 
@@ -224,6 +227,14 @@ if [ -z "${TABLES}" ] && [ -z "${VIEWS}" ]; then
     echo "错误: 经过 -t/-i 过滤后，没有需要备份的表或视图。"
     exit 1
 fi
+
+# 记录本次备份的表过滤条件，供后续增量备份与恢复时保持一致（增量必须沿用全量条件）
+BACKUP_OPTIONS_JSON="${BACKUP_DIR}/meta/backup-options.json"
+_esc_json() { echo "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+printf '{\n  "tables_include": "%s",\n  "tables_exclude": "%s"\n}\n' \
+    "$(_esc_json "${TABLES_INCLUDE:-}")" \
+    "$(_esc_json "${TABLES_EXCLUDE:-}")" \
+    > "${BACKUP_OPTIONS_JSON}"
 
 # 1. 备份每个基表的结构 (不含数据)，使用 mysqldump
 echo "正在备份表结构..."

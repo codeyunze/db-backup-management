@@ -38,6 +38,21 @@
             font-weight: 600;
             font-size: 0.9rem;
         }
+        .card-header.collapsible-header {
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 10px;
+        }
+        .card-toggle-icon {
+            font-size: 14px;
+            color: #57606a;
+            user-select: none;
+        }
+        .card-header.collapsible-header .card-toggle-icon {
+            margin-left: auto;
+        }
         .card-body {
             padding: 20px;
         }
@@ -89,6 +104,58 @@
             background: #da3633;
         }
         .btn-danger:hover { background: #f85149; }
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            background: #d0d7de;
+            color: #24292f;
+            margin-left: 8px;
+        }
+        .badge-primary {
+            background: #0969da;
+            color: #fff;
+        }
+        .backup-type-options {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .backup-type-option {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 16px;
+            border-radius: 8px;
+            border: 1px solid #d0d7de;
+            background: #fff;
+            color: #57606a;
+            font-size: 0.9rem;
+            cursor: pointer;
+            min-width: 120px;
+        }
+        .backup-type-option:hover {
+            border-color: #8c959f;
+        }
+        .backup-type-option input[type="radio"] {
+            margin: 0;
+            width: 16px;
+            height: 16px;
+            accent-color: #0969da;
+        }
+        .backup-type-option.checked {
+            border-color: #0969da;
+            color: #0969da;
+        }
+        .backup-type-option.checked input[type="radio"] {
+            accent-color: #0969da;
+        }
+        .backup-inc-block {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #eaeef2;
+        }
         .toast {
             position: fixed;
             top: 20px;
@@ -125,13 +192,13 @@
         tr:hover { background: #f6f8fa; }
         .size { font-family: monospace; font-size: 0.85rem; }
         .col-db {
-            width: 210px;
+            width: 180px;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
         }
         .dir-name {
-            width: 250px;
+            width: 240px;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -144,7 +211,7 @@
             width: 100px;
         }
         .col-actions {
-            width: 280px;
+            width: 320px;
             white-space: nowrap;
         }
         .empty-state {
@@ -218,8 +285,38 @@
 
         <!-- 新建备份 -->
         <div class="card">
-            <div class="card-header">新建备份</div>
+            <div class="card-header collapsible-header">
+                新建备份
+                <span class="badge badge-primary">支持全量 / 增量</span>
+            </div>
             <div class="card-body">
+                <div class="form-row">
+                    <div class="form-group" style="width:100%;">
+                        <label>备份类型</label>
+                        <div class="backup-type-options">
+                            <label class="backup-type-option checked">
+                                <input type="radio" name="backup-type" value="full" checked>
+                                <span>全量备份</span>
+                            </label>
+                            <label class="backup-type-option">
+                                <input type="radio" name="backup-type" value="incremental">
+                                <span>增量备份</span>
+                            </label>
+                        </div>
+                        <div id="backup-inc-block" class="backup-inc-block" style="display:none;">
+                            <div class="form-row">
+                                <div class="form-group" style="flex:2;">
+                                    <label>本次增量对应的全量备份目录 *</label>
+                                    <select id="backup-full-base-dir">
+                                        <option value="">-- 请选择全量备份目录 --</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <p style="color:#8c959f;font-size:0.8rem;margin:4px 0 0 0;">起始位点：若该全量下已有增量，则从<strong>最后一个增量的结束位点</strong>开始，否则从全量 <code>meta/tables-binlog.json</code> 读取。</p>
+                            <p style="color:#8c959f;font-size:0.8rem;margin:4px 0 0 0;">表过滤条件与全量备份一致，由所选全量备份的 <code>meta/backup-options.json</code> 决定，不可自定义。</p>
+                        </div>
+                    </div>
+                </div>
                 <div class="form-row">
                     <div class="form-group">
                         <label>数据库主机 *</label>
@@ -231,7 +328,7 @@
                     </div>
                     <div class="form-group">
                         <label>用户名 *</label>
-                        <input type="text" id="backup-user" placeholder="root" required>
+                        <input type="text" id="backup-user" placeholder="root" value="root" required>
                     </div>
                     <div class="form-group">
                         <label>密码 *</label>
@@ -242,7 +339,7 @@
                         <input type="text" id="backup-database" placeholder="mall" required>
                     </div>
                 </div>
-                <div class="form-row">
+                <div class="form-row" id="backup-table-filter-row">
                     <div class="form-group" style="flex:2;">
                         <label>仅备份指定表</label>
                         <input type="text" id="backup-tables" placeholder="如 user,order 多个表用逗号分隔，留空=全部">
@@ -264,12 +361,15 @@
                         <button class="btn" id="btn-backup" onclick="doBackup()">执行备份</button>
                     </div>
                 </div>
+                <p style="color:#8c959f;font-size:0.8rem;margin-top:4px;">
+                    提示：增量备份会从所选全量备份的 meta 中自动读取起始 binlog 位点，无需手动填写。
+                </p>
             </div>
         </div>
 
         <!-- 数据还原 -->
         <div class="card">
-            <div class="card-header">数据还原</div>
+            <div class="card-header collapsible-header">数据还原</div>
             <div class="card-body">
                 <div class="form-row">
                     <div class="form-group" style="flex:2;">
@@ -310,7 +410,7 @@
                     </div>
                     <div class="form-group">
                         <label>用户名 *</label>
-                        <input type="text" id="restore-user" placeholder="root">
+                        <input type="text" id="restore-user" placeholder="root" value="root">
                     </div>
                     <div class="form-group">
                         <label>密码 *</label>
@@ -328,11 +428,11 @@
 
         <!-- 备份列表 -->
         <div class="card">
-            <div class="card-header">
+            <div class="card-header collapsible-header">
                 <span>备份列表</span>
-                <span style="float:right;">
-                    <input type="text" id="filter-db" placeholder="按数据库名筛选" style="padding:6px 10px;margin-right:8px;width:140px;">
-                    <button class="btn btn-secondary" onclick="loadBackups()">刷新</button>
+                <span>
+                    <input type="text" id="filter-db" placeholder="按数据库名筛选" style="padding:6px 10px;margin-left:12px;width:140px;">
+                    <button class="btn btn-secondary" onclick="loadBackups()" style="margin-left:8px;">刷新</button>
                 </span>
             </div>
             <div class="card-body">
@@ -377,10 +477,43 @@
                 </div>
             </div>
         </div>
+        <!-- 增量备份列表弹窗 -->
+        <div id="incr-modal" class="modal-overlay" style="display:none;">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3 id="incr-modal-title">增量备份列表</h3>
+                    <button class="btn btn-secondary btn-sm" onclick="closeIncrModal()">关闭</button>
+                </div>
+                <div class="modal-body">
+                    <div id="incr-content" style="font-family:monospace;font-size:0.85rem;"></div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
         const API = '';
+
+        // 卡片折叠：点击卡片头部可展开/收起对应 body
+        function initCollapsibleCards() {
+            document.querySelectorAll('.card-header.collapsible-header').forEach(header => {
+                const body = header.nextElementSibling;
+                if (!body || !body.classList.contains('card-body')) return;
+                let icon = header.querySelector('.card-toggle-icon');
+                if (!icon) {
+                    icon = document.createElement('span');
+                    icon.className = 'card-toggle-icon';
+                    icon.textContent = '−';
+                    header.appendChild(icon);
+                }
+                header.addEventListener('click', (e) => {
+                    if (e.target.closest('button, input, select, a, label')) return;
+                    const hidden = body.style.display === 'none';
+                    body.style.display = hidden ? '' : 'none';
+                    icon.textContent = hidden ? '−' : '+';
+                });
+            });
+        }
 
         function toast(msg, type) {
             const el = document.createElement('div');
@@ -406,19 +539,29 @@
                 const tbody = document.getElementById('backup-tbody');
                 const empty = document.getElementById('backup-empty');
                 const sel = document.getElementById('restore-backup-dir');
+                const selBase = document.getElementById('backup-full-base-dir');
 
                 tbody.innerHTML = '';
                 sel.innerHTML = '<option value="">-- 请选择 --</option>';
+                if (selBase) {
+                    selBase.innerHTML = '<option value="">-- 请选择全量备份目录 --</option>';
+                }
                 items.forEach(it => {
                     const tr = document.createElement('tr');
                     const esc = s => ('' + s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-                    const ops = '<td class="actions col-actions"><button class="btn btn-secondary btn-sm btn-log" data-dir="' + esc(it.dirName) + '" data-type="backup">备份日志</button><button class="btn btn-secondary btn-sm btn-log" data-dir="' + esc(it.dirName) + '" data-type="restore">还原日志</button><button class="btn btn-secondary btn-sm btn-tables" data-dir="' + esc(it.dirName) + '">查看表</button><button class="btn btn-danger btn-sm btn-del" data-dir="' + esc(it.dirName) + '">删除</button></td>';
+                    const ops = '<td class="actions col-actions"><button class="btn btn-secondary btn-sm btn-log" data-dir="' + esc(it.dirName) + '" data-type="backup">备份日志</button><button class="btn btn-secondary btn-sm btn-log" data-dir="' + esc(it.dirName) + '" data-type="restore">还原日志</button><button class="btn btn-secondary btn-sm btn-tables" data-dir="' + esc(it.dirName) + '">查看表</button><button class="btn btn-secondary btn-sm btn-incr-list" data-backup-dir="' + esc(it.backupDir) + '" data-database="' + esc(it.database) + '">查看增量</button><button class="btn btn-danger btn-sm btn-del" data-dir="' + esc(it.dirName) + '">删除</button></td>';
                     tr.innerHTML = '<td class="col-db" title="' + esc(it.database) + '">' + esc(it.database) + '</td><td class="size dir-name" title="' + esc(it.dirName) + '">' + esc(it.dirName) + '</td><td class="col-time">' + esc(it.backupTime) + '</td><td class="col-size">' + fmtSize(it.size) + '</td>' + ops;
                     tbody.appendChild(tr);
                     const opt = document.createElement('option');
                     opt.value = it.backupDir;
                     opt.textContent = it.dirName + ' (' + it.backupTime + ')';
                     sel.appendChild(opt);
+                    if (selBase) {
+                        const opt2 = document.createElement('option');
+                        opt2.value = it.backupDir;
+                        opt2.textContent = it.dirName + ' (' + it.backupTime + ')';
+                        selBase.appendChild(opt2);
+                    }
                 });
                 empty.style.display = items.length ? 'none' : 'block';
                 tbody.querySelectorAll('.btn-log').forEach(btn => {
@@ -429,6 +572,9 @@
                 });
                 tbody.querySelectorAll('.btn-del').forEach(btn => {
                     btn.onclick = () => doDelete(btn.dataset.dir);
+                });
+                tbody.querySelectorAll('.btn-incr-list').forEach(btn => {
+                    btn.onclick = () => showIncrementals(btn.dataset.backupDir, btn.dataset.database);
                 });
             } catch (e) {
                 toast('获取备份列表失败: ' + e.message, 'error');
@@ -515,37 +661,68 @@
             const user = document.getElementById('backup-user').value.trim();
             const password = document.getElementById('backup-password').value;
             const database = document.getElementById('backup-database').value.trim();
+            const backupType = document.querySelector('input[name="backup-type"]:checked')?.value || 'full';
             if (!host || !user || !password || !database) {
                 toast('请填写主机、用户名、密码、数据库名', 'error');
                 return;
             }
             const btn = document.getElementById('btn-backup');
             btn.disabled = true;
-            btn.textContent = '备份中...';
-            const body = {
-                host,
-                port: document.getElementById('backup-port').value || '3306',
-                user,
-                password,
-                database,
-                clean_days: parseInt(document.getElementById('backup-clean').value) || 0
-            };
-            const tables = document.getElementById('backup-tables').value.trim();
-            const ignore = document.getElementById('backup-ignore').value.trim();
-            if (tables) body.tables = tables;
-            if (ignore) body.ignore_tables = ignore;
+            btn.textContent = backupType === 'incremental' ? '增量备份中...' : '备份中...';
             try {
-                const r = await fetch('/db/backup', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body)
-                });
-                const j = await r.json();
-                if (j.code === 200) {
-                    toast('备份成功');
-                    loadBackups();
+                if (backupType === 'full') {
+                    const body = {
+                        host,
+                        port: document.getElementById('backup-port').value || '3306',
+                        user,
+                        password,
+                        database,
+                        clean_days: parseInt(document.getElementById('backup-clean').value) || 0
+                    };
+                    const tables = document.getElementById('backup-tables').value.trim();
+                    const ignore = document.getElementById('backup-ignore').value.trim();
+                    if (tables) body.tables = tables;
+                    if (ignore) body.ignore_tables = ignore;
+
+                    const r = await fetch('/db/backup', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body)
+                    });
+                    const j = await r.json();
+                    if (j.code === 200) {
+                        toast('备份成功');
+                        loadBackups();
+                    } else {
+                        toast('备份失败: ' + (j.msg || j.data?.stderr || ''), 'error');
+                    }
                 } else {
-                    toast('备份失败: ' + (j.msg || j.data?.stderr || ''), 'error');
+                    // 增量备份
+                    const fullBackupDir = document.getElementById('backup-full-base-dir').value;
+                    if (!fullBackupDir) {
+                        toast('请选择本次增量对应的全量备份目录', 'error');
+                        return;
+                    }
+                    const body = {
+                        host,
+                        port: document.getElementById('backup-port').value || '3306',
+                        user,
+                        password,
+                        database,
+                        full_backup_dir: fullBackupDir
+                    };
+                    const r = await fetch('/db/backup-incremental', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body)
+                    });
+                    const j = await r.json();
+                    if (j.code === 200) {
+                        toast('增量备份成功');
+                    } else {
+                        const errDetail = (j.data && (j.data.stderr || j.data.stdout)) ? (j.data.stderr || '') + (j.data.stderr && j.data.stdout ? '\n' : '') + (j.data.stdout || '') : (j.msg || '');
+                        toast('增量备份失败: ' + (errDetail || '未知错误'), 'error');
+                    }
                 }
             } catch (e) {
                 toast('请求失败: ' + e.message, 'error');
@@ -554,6 +731,69 @@
                 btn.textContent = '执行备份';
             }
         }
+
+        // 备份类型切换：样式、增量块显示；表过滤行始终显示，增量时为只读并随全量目录加载
+        function updateBackupTypeUI() {
+            const type = document.querySelector('input[name="backup-type"]:checked')?.value || 'full';
+            const block = document.getElementById('backup-inc-block');
+            if (block) block.style.display = type === 'incremental' ? 'block' : 'none';
+            const tablesInput = document.getElementById('backup-tables');
+            const ignoreInput = document.getElementById('backup-ignore');
+            if (tablesInput && ignoreInput) {
+                const isIncr = type === 'incremental';
+                tablesInput.disabled = isIncr;
+                ignoreInput.disabled = isIncr;
+                if (isIncr) loadBackupOptionsForIncremental();
+                else { tablesInput.placeholder = '如 user,order 多个表用逗号分隔，留空=全部'; ignoreInput.placeholder = '如 order_log 多个表用逗号分隔，留空=无'; }
+            }
+            document.querySelectorAll('.backup-type-option').forEach(lab => {
+                const radio = lab.querySelector('input[name="backup-type"]');
+                if (radio && radio.checked) lab.classList.add('checked');
+                else lab.classList.remove('checked');
+            });
+        }
+        async function loadBackupOptionsForIncremental() {
+            const sel = document.getElementById('backup-full-base-dir');
+            const dir = sel && sel.value ? sel.value.trim() : '';
+            const tablesInput = document.getElementById('backup-tables');
+            const ignoreInput = document.getElementById('backup-ignore');
+            if (!tablesInput || !ignoreInput) return;
+            if (!dir) {
+                tablesInput.placeholder = '请先选择全量备份目录';
+                ignoreInput.placeholder = '请先选择全量备份目录';
+                tablesInput.value = '';
+                ignoreInput.value = '';
+                return;
+            }
+            try {
+                const r = await fetch('/db/backup-options?full_backup_dir=' + encodeURIComponent(dir));
+                const j = await r.json();
+                if (j.code === 200 && j.data) {
+                    tablesInput.value = j.data.tables_include || '';
+                    ignoreInput.value = j.data.tables_exclude || '';
+                    tablesInput.placeholder = '（继承自全量，不可编辑）';
+                    ignoreInput.placeholder = '（继承自全量，不可编辑）';
+                } else {
+                    tablesInput.value = '';
+                    ignoreInput.value = '';
+                    tablesInput.placeholder = '该全量未记录过滤条件';
+                    ignoreInput.placeholder = '该全量未记录过滤条件';
+                }
+            } catch (e) {
+                tablesInput.value = '';
+                ignoreInput.value = '';
+                tablesInput.placeholder = '加载失败';
+                ignoreInput.placeholder = '加载失败';
+            }
+        }
+        document.querySelectorAll('input[name="backup-type"]').forEach(r => {
+            r.addEventListener('change', updateBackupTypeUI);
+        });
+        const selBase = document.getElementById('backup-full-base-dir');
+        if (selBase) selBase.addEventListener('change', function() {
+            if (document.querySelector('input[name="backup-type"]:checked')?.value === 'incremental') loadBackupOptionsForIncremental();
+        });
+        updateBackupTypeUI();
 
         async function doDelete(dirName) {
             if (!confirm('确定要删除备份 "' + dirName + '" 吗？此操作不可恢复。')) return;
@@ -622,6 +862,7 @@
         document.getElementById('filter-db').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') loadBackups();
         });
+        initCollapsibleCards();
 
         let logPollTimer = null;
         function showLog(dirName, type) {
@@ -709,6 +950,52 @@
         document.getElementById('tables-modal').addEventListener('click', (e) => {
             if (e.target === document.getElementById('tables-modal')) closeTablesModal();
         });
+
+        function closeIncrModal() {
+            document.getElementById('incr-modal').style.display = 'none';
+        }
+
+        async function showIncrementals(fullBackupDirArg, databaseArg) {
+            const fullBackupDir = fullBackupDirArg
+                || (document.getElementById('backup-full-base-dir') && document.getElementById('backup-full-base-dir').value)
+                || (document.getElementById('restore-backup-dir') && document.getElementById('restore-backup-dir').value);
+            const database = (databaseArg != null && databaseArg !== '') ? databaseArg : (document.getElementById('backup-database') && document.getElementById('backup-database').value.trim()) || '';
+            if (!fullBackupDir) {
+                toast('请先选择全量备份目录', 'error');
+                return;
+            }
+            try {
+                const params = new URLSearchParams();
+                params.append('full_backup_dir', fullBackupDir);
+                if (database) params.append('database', database);
+                const r = await fetch('/db/incrementals?' + params.toString());
+                const j = await r.json();
+                if (j.code !== 200) {
+                    toast('获取增量备份列表失败: ' + (j.msg || '未知错误'), 'error');
+                    return;
+                }
+                const list = (j.data && (j.data.items || [])) || [];
+                const modal = document.getElementById('incr-modal');
+                const content = document.getElementById('incr-content');
+                if (!list.length) {
+                    content.innerHTML = '<p style="color:#8c959f">当前全量备份暂无增量备份。</p>';
+                } else {
+                    let html = '<table class="table"><thead><tr><th>目录名</th><th>from</th><th>to</th></tr></thead><tbody>';
+                    list.forEach(it => {
+                        const bf = it.binlogFrom || {};
+                        const bt = it.binlogTo || {};
+                        const fromText = (bf.binlog_file || '') + ':' + (bf.binlog_pos || '') + (bf.recorded_at ? (' @ ' + bf.recorded_at) : '');
+                        const toText = bt && bt.binlog_file ? ((bt.binlog_file || '') + ':' + (bt.binlog_pos || '') + (bt.recorded_at ? (' @ ' + bt.recorded_at) : '')) : '-';
+                        html += '<tr><td>' + it.dirName + '</td><td>' + fromText + '</td><td>' + toText + '</td></tr>';
+                    });
+                    html += '</tbody></table>';
+                    content.innerHTML = html;
+                }
+                modal.style.display = 'flex';
+            } catch (e) {
+                toast('获取增量备份列表失败: ' + e.message, 'error');
+            }
+        }
 
         loadBackups();
     </script>

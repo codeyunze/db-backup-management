@@ -1,20 +1,24 @@
 """
 数据库备份管理 API
-- POST /db/backup   执行备份
-- POST /db/restore 执行还原
-- GET  /db/backups  查询已备份文件列表
-- DELETE /db/backups/<dir_name> 删除指定备份
+- POST /db/backup             执行全量备份
+- POST /db/restore            执行全量还原
+- POST /db/backup-incremental 基于全量备份执行 binlog 增量备份
+- GET  /db/backups            查询已备份文件列表
+- GET  /db/incrementals       查询指定全量备份下的增量备份列表
+- DELETE /db/backups/<dir>    删除指定备份
 """
 import os
 import re
+import json
 import shutil
 import subprocess
 from flask import Flask, request, jsonify, render_template
 
 app = Flask(__name__)
 
-SCRIPT_DIR = "/scripts"
-BACKUP_ROOT = "/data/backup/mysql"
+# 脚本与备份根目录，支持环境变量覆盖（本地运行时可设置为本项目 scripts 与备份目录）
+SCRIPT_DIR = os.environ.get("SCRIPT_DIR", "/scripts")
+BACKUP_ROOT = os.environ.get("BACKUP_ROOT", "/data/backup/mysql")
 
 # 备份目录命名格式：{数据库名}_YYYYMMDD_HHMMSS
 BACKUP_DIR_PATTERN = re.compile(r"^(.+)_(\d{8})_(\d{6})$")
@@ -25,13 +29,17 @@ def _run_script(script_name, args_list, timeout=None):
     script_path = os.path.join(SCRIPT_DIR, script_name)
     if not os.path.isfile(script_path):
         return False, "", f"脚本不存在: {script_path}", -1
+    # 保证子进程有包含 /usr/bin 的 PATH，避免 mysqlbinlog 等系统命令 command not found
+    path_env = os.environ.get("PATH") or "/usr/local/bin:/usr/bin:/bin"
+    if "/usr/bin" not in path_env:
+        path_env = "/usr/bin:" + path_env
     try:
         result = subprocess.run(
             [script_path] + args_list,
             capture_output=True,
             text=True,
             timeout=timeout or 3600,
-            env={**os.environ, "PATH": os.environ.get("PATH", "")},
+            env={**os.environ, "PATH": path_env},
         )
         return (
             result.returncode == 0,
@@ -63,8 +71,10 @@ def test_connection():
             return jsonify({"code": 400, "msg": "缺少 host 或 user", "data": None}), 400
 
         db_safe = database.replace("`", "``") if database else ""
+        # 使用镜像内提供的 MySQL 官方客户端（已在 PATH 中）
+        mysql_bin = "mysql"
         cmd = [
-            "mysql",
+            mysql_bin,
             "-h", host,
             "-P", port,
             "-u", user,
@@ -234,6 +244,217 @@ def restore():
         }), 500
 
 
+def _get_binlog_start_from_full_backup(full_backup_dir):
+    """
+    从全量备份目录的 meta/tables-binlog.json 中解析出增量起始位点。
+    使用 recorded_at 最晚的那条记录作为起点，保证不遗漏全量后的变更。
+    返回 (binlog_file, binlog_pos) 或 (None, None)。
+    """
+    meta_path = os.path.join(full_backup_dir, "meta", "tables-binlog.json")
+    if not os.path.isfile(meta_path):
+        return None, None
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return None, None
+    if not data or not isinstance(data, dict):
+        return None, None
+    latest_file = None
+    latest_pos = None
+    latest_ts = None
+    for table_name, meta in data.items():
+        if not isinstance(meta, dict):
+            continue
+        f = meta.get("binlog_file")
+        p = meta.get("binlog_pos")
+        ts = meta.get("recorded_at")
+        if f and p is not None and ts:
+            if latest_ts is None or ts > latest_ts:
+                latest_ts = ts
+                latest_file = f
+                latest_pos = int(p)
+    return latest_file, latest_pos
+
+
+def _get_last_incremental_end_position(full_backup_dir, database=None):
+    """
+    若该全量备份下已有增量备份，返回「最后一个增量」的结束位点（binlog_to），
+    作为下一次增量的起始位点。否则返回 (None, None)。
+    返回 (binlog_file, binlog_pos) 或 (None, None)。
+    """
+    incr_root = os.path.join(BACKUP_ROOT, "incremental")
+    if not os.path.isdir(incr_root):
+        return None, None
+    full_norm = os.path.normpath(full_backup_dir)
+    candidates = []
+    for name in os.listdir(incr_root):
+        path = os.path.join(incr_root, name)
+        if not os.path.isdir(path) or "_inc_" not in name:
+            continue
+        db_name = name.split("_inc_", 1)[0]
+        if database and db_name != database:
+            continue
+        meta_from_path = os.path.join(path, "meta", "binlog_from.json")
+        if not os.path.isfile(meta_from_path):
+            continue
+        try:
+            with open(meta_from_path, "r", encoding="utf-8") as f:
+                meta_from = json.load(f)
+        except Exception:
+            continue
+        base_full = meta_from.get("base_full_backup_dir") or meta_from.get("full_backup_dir")
+        if not base_full or os.path.normpath(base_full) != full_norm:
+            continue
+        meta_to_path = os.path.join(path, "meta", "binlog_to.json")
+        if not os.path.isfile(meta_to_path):
+            continue
+        try:
+            with open(meta_to_path, "r", encoding="utf-8") as f:
+                meta_to = json.load(f)
+        except Exception:
+            continue
+        bf = meta_to.get("binlog_file")
+        bp = meta_to.get("binlog_pos")
+        ts = (meta_to.get("recorded_at") or meta_from.get("recorded_at") or "") + "|" + name
+        if bf and bp is not None:
+            candidates.append((ts, bf, int(bp)))
+    if not candidates:
+        return None, None
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0][1], candidates[0][2]
+
+
+@app.route("/db/backup-incremental", methods=["POST"])
+def backup_incremental():
+    """
+    基于已有的全量备份目录执行一次 binlog 增量备份。
+
+    请求体 JSON：
+    - host, port, user, password, database: 连接与库名（必填）
+    - full_backup_dir: 所属全量备份目录的绝对路径（必填）
+    - start_file / start_pos: 可选；不传时：若该全量下已有增量则从「最后一个增量」的 meta/binlog_to.json 取结束位点，否则从全量 meta/tables-binlog.json 读取
+    - stop_datetime: binlog 截止时间（可选）
+    """
+    try:
+        data = request.get_json() or {}
+        host = data.get("host")
+        user = data.get("user")
+        password = data.get("password")
+        database = data.get("database")
+        full_backup_dir = data.get("full_backup_dir")
+        start_file = data.get("start_file")
+        start_pos = data.get("start_pos")
+
+        if not all([host, user, password, database, full_backup_dir]):
+            return jsonify({
+                "code": 400,
+                "msg": "缺少必要参数: host, user, password, database, full_backup_dir",
+                "data": None,
+            }), 400
+
+        if not start_file or start_pos is None:
+            # 若该全量下已有增量，则从「最后一个增量」的结束位点开始；否则从全量 meta 的 tables-binlog 开始
+            start_file, start_pos = _get_last_incremental_end_position(
+                full_backup_dir, data.get("database")
+            )
+            if not start_file or start_pos is None:
+                start_file, start_pos = _get_binlog_start_from_full_backup(full_backup_dir)
+            if not start_file or start_pos is None:
+                return jsonify({
+                    "code": 400,
+                    "msg": "未找到起始位点：请确认全量备份目录下存在 meta/tables-binlog.json 且内容有效，或手动传入 start_file、start_pos",
+                    "data": None,
+                }), 400
+
+        start_pos_int = int(start_pos)
+
+        args = [
+            "-H", str(host),
+            "-P", str(data.get("port", "3306")),
+            "-u", str(user),
+            "-p", str(password),
+            "-d", str(database),
+            "-b", BACKUP_ROOT,
+            "-F", str(full_backup_dir),
+            "--start-file", str(start_file),
+            "--start-pos", str(start_pos_int),
+        ]
+
+        stop_dt = data.get("stop_datetime")
+        if stop_dt:
+            args.extend(["--stop-datetime", str(stop_dt)])
+
+        success, stdout, stderr, returncode = _run_script("mysql-backup-incremental.sh", args)
+
+        if success:
+            return jsonify({
+                "code": 200,
+                "msg": "增量备份成功",
+                "data": {"stdout": stdout, "stderr": stderr},
+            })
+        return jsonify({
+            "code": 500,
+            "msg": "增量备份失败",
+            "data": {"stdout": stdout, "stderr": stderr, "returncode": returncode},
+        }), 500
+
+    except Exception as e:
+        return jsonify({
+            "code": 500,
+            "msg": str(e),
+            "data": None,
+        }), 500
+
+
+@app.route("/db/backup-options", methods=["GET"])
+def get_backup_options():
+    """
+    获取指定全量备份目录的 meta/backup-options.json（表过滤条件），供增量模式下只读展示。
+    查询参数：full_backup_dir 或 dir，为全量备份目录绝对路径（必须在 BACKUP_ROOT 下）。
+    """
+    try:
+        full_backup_dir = (
+            request.args.get("full_backup_dir") or request.args.get("dir") or ""
+        ).strip()
+        if not full_backup_dir:
+            return jsonify({
+                "code": 400,
+                "msg": "缺少参数: full_backup_dir 或 dir",
+                "data": None,
+            }), 400
+        full_backup_dir = os.path.normpath(full_backup_dir)
+        if not full_backup_dir.startswith(os.path.normpath(BACKUP_ROOT) + os.sep) and full_backup_dir != os.path.normpath(BACKUP_ROOT):
+            return jsonify({
+                "code": 400,
+                "msg": "目录必须在备份根目录下",
+                "data": None,
+            }), 400
+        meta_path = os.path.join(full_backup_dir, "meta", "backup-options.json")
+        if not os.path.isfile(meta_path):
+            return jsonify({
+                "code": 200,
+                "msg": "ok",
+                "data": {"tables_include": "", "tables_exclude": ""},
+            })
+        with open(meta_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return jsonify({
+            "code": 200,
+            "msg": "ok",
+            "data": {
+                "tables_include": data.get("tables_include", "") or "",
+                "tables_exclude": data.get("tables_exclude", "") or "",
+            },
+        })
+    except Exception as e:
+        return jsonify({
+            "code": 500,
+            "msg": str(e),
+            "data": None,
+        }), 500
+
+
 @app.route("/db/backups", methods=["GET"])
 def list_backups():
     """
@@ -282,6 +503,99 @@ def list_backups():
 
         # 按备份时间倒序（新的在前）
         items.sort(key=lambda x: x["backupTime"], reverse=True)
+
+        return jsonify({
+            "code": 200,
+            "msg": "ok",
+            "data": {"items": items, "total": len(items)},
+        })
+
+    except Exception as e:
+        return jsonify({
+            "code": 500,
+            "msg": str(e),
+            "data": None,
+        }), 500
+
+
+@app.route("/db/incrementals", methods=["GET"])
+def list_incrementals():
+    """
+    查询某次全量备份下的增量备份列表。
+
+    查询参数：
+    - full_backup_dir: 全量备份目录绝对路径（必填）
+    - database: 数据库名（可选，用于按库过滤）
+    """
+    try:
+        full_backup_dir = request.args.get("full_backup_dir", "").strip()
+        db_filter = request.args.get("database", "").strip()
+
+        if not full_backup_dir:
+            return jsonify({
+                "code": 400,
+                "msg": "缺少参数: full_backup_dir",
+                "data": None,
+            }), 400
+
+        # 增量目录改为放在对应全量备份目录下的 incremental 子目录中
+        incr_root = os.path.join(os.path.normpath(full_backup_dir), "incremental")
+        if not os.path.isdir(incr_root):
+            return jsonify({
+                "code": 200,
+                "msg": "ok",
+                "data": {"items": [], "total": 0},
+            })
+
+        items = []
+        for name in os.listdir(incr_root):
+            path = os.path.join(incr_root, name)
+            if not os.path.isdir(path):
+                continue
+
+            # 约定目录名格式: <db>_inc_YYYYMMDD_HHMMSS
+            if "_inc_" not in name:
+                continue
+            db_name = name.split("_inc_", 1)[0]
+            if db_filter and db_name != db_filter:
+                continue
+
+            meta_from_path = os.path.join(path, "meta", "binlog_from.json")
+            if not os.path.isfile(meta_from_path):
+                continue
+            try:
+                with open(meta_from_path, "r", encoding="utf-8") as f:
+                    meta_from = json.load(f)
+            except Exception:
+                continue
+
+            base_full = meta_from.get("base_full_backup_dir") or meta_from.get("full_backup_dir")
+            # 目录结构已经限定在 full_backup_dir 下，这里仅作为健壮性校验，不再用于筛选
+
+            meta_to_path = os.path.join(path, "meta", "binlog_to.json")
+            meta_to = None
+            if os.path.isfile(meta_to_path):
+                try:
+                    with open(meta_to_path, "r", encoding="utf-8") as f:
+                        meta_to = json.load(f)
+                except Exception:
+                    meta_to = None
+
+            item = {
+                "database": db_name,
+                "incrementalDir": path,
+                "dirName": name,
+                "binlogFrom": meta_from,
+                "binlogTo": meta_to,
+            }
+            items.append(item)
+
+        # 按 from.recorded_at 或目录名倒序
+        def _sort_key(it):
+            rec = (it.get("binlogFrom") or {}).get("recorded_at") or ""
+            return rec or it.get("dirName", "")
+
+        items.sort(key=_sort_key, reverse=True)
 
         return jsonify({
             "code": 200,
