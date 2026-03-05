@@ -373,7 +373,7 @@
             <div class="card-body">
                 <div class="form-row">
                     <div class="form-group" style="flex:2;">
-                        <label>选择备份目录 *</label>
+                        <label>选择全量备份目录 *</label>
                         <select id="restore-backup-dir">
                             <option value="">-- 请选择或从下方列表获取 --</option>
                         </select>
@@ -381,6 +381,14 @@
                     <div class="form-group">
                         <label>目标数据库名 *</label>
                         <input type="text" id="restore-target-db" placeholder="还原到的数据库名">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:2;">
+                        <label>选择增量备份目录（可选）</label>
+                        <select id="restore-inc-dir" disabled>
+                            <option value="">-- 如需恢复到包含增量的状态，可在此选择 --</option>
+                        </select>
                     </div>
                 </div>
                 <div class="form-row">
@@ -859,9 +867,44 @@
             }
         }
 
+        // 根据所选全量备份目录加载对应的增量备份目录（供还原时选择，可选）
+        async function loadRestoreIncrementals(fullBackupDir) {
+            const selInc = document.getElementById('restore-inc-dir');
+            if (!selInc) return;
+            if (!fullBackupDir) {
+                selInc.innerHTML = '<option value=\"\">-- 如需恢复到包含增量的状态，可在此选择 --</option>';
+                selInc.disabled = true;
+                return;
+            }
+            try {
+                const params = new URLSearchParams();
+                params.append('full_backup_dir', fullBackupDir);
+                const r = await fetch('/db/incrementals?' + params.toString());
+                const j = await r.json();
+                const list = (j.code === 200 && j.data && (j.data.items || [])) || [];
+                selInc.innerHTML = '<option value=\"\">-- 不选择则仅恢复全量备份 --</option>';
+                list.forEach(it => {
+                    const opt = document.createElement('option');
+                    opt.value = it.incrementalDir || it.dirName || '';
+                    opt.textContent = it.dirName || it.incrementalDir || '';
+                    selInc.appendChild(opt);
+                });
+                selInc.disabled = list.length === 0;
+            } catch (e) {
+                selInc.innerHTML = '<option value=\"\">-- 加载增量列表失败 --</option>';
+                selInc.disabled = true;
+            }
+        }
+
         document.getElementById('filter-db').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') loadBackups();
         });
+        const restoreBackupSelect = document.getElementById('restore-backup-dir');
+        if (restoreBackupSelect) {
+            restoreBackupSelect.addEventListener('change', () => {
+                loadRestoreIncrementals(restoreBackupSelect.value);
+            });
+        }
         initCollapsibleCards();
 
         let logPollTimer = null;
