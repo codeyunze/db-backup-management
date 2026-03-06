@@ -354,6 +354,12 @@
                         <label>清理旧备份（天）（0=不清理）</label>
                         <input type="number" id="backup-clean" value="0" min="0" placeholder="0=不清理">
                     </div>
+                    <div class="form-group" style="display:flex;align-items:flex-end;gap:6px;">
+                        <label style="margin-bottom:0;">
+                            <input type="checkbox" id="backup-gzip" checked>
+                            启用 gzip 压缩
+                        </label>
+                    </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group actions">
@@ -690,8 +696,10 @@
                     };
                     const tables = document.getElementById('backup-tables').value.trim();
                     const ignore = document.getElementById('backup-ignore').value.trim();
+                    const gzipCheckbox = document.getElementById('backup-gzip');
                     if (tables) body.tables = tables;
                     if (ignore) body.ignore_tables = ignore;
+                    if (gzipCheckbox && gzipCheckbox.checked) body.enable_gzip = true;
 
                     const r = await fetch('/db/backup', {
                         method: 'POST',

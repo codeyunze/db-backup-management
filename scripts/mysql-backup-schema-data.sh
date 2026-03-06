@@ -13,6 +13,9 @@ ROW_THRESHOLD=100000   # 超过该行数即拆分为多文件（可根据磁盘/
 CHUNK_SIZE=50000       # 每个数据文件最多包含的行数
 INSERT_BATCH=500       # 每个 INSERT 语句包含的行数（200~1000 为宜，过大可能触发 max_allowed_packet）
 
+# 是否对备份结果启用 gzip 压缩（0=关闭，1=开启，可通过 --gzip 打开）
+ENABLE_GZIP=0
+
 # 日志：留空则使用本次备份目录下的 backup.log
 LOG_FILE=""
 # 日志超过该大小(MB)时自动备份为 .YYYYMMDD_HHMMSS.bak，然后重新记录
@@ -42,6 +45,7 @@ show_usage() {
     echo "  -t, --tables      仅备份指定表，多个表用逗号分隔，如: -t user,order,product"
     echo "  -i, --ignore      不备份的表，多个表用逗号分隔；优先级高于 -t"
     echo "  -c, --clean       备份完成后清理 N 天前的旧备份，如: -c 10（不传则不清理）"
+    echo "      --gzip        启用 gzip 压缩，将生成的 .sql 压缩为 .sql.gz"
     echo "  -h, --help        显示此帮助"
     echo ""
     echo "示例:"
@@ -104,6 +108,10 @@ while [ $# -gt 0 ]; do
             [ -n "${2:-}" ] || { echo "错误: -c/--clean 需要指定天数"; exit 1; }
             CLEAN_DAYS="${2}"
             shift 2
+            ;;
+        --gzip|--enable-gzip)
+            ENABLE_GZIP=1
+            shift 1
             ;;
         *)
             echo "错误: 未知选项 ${1}"
@@ -379,11 +387,26 @@ if [ -f "${BINLOG_META_TMP}" ]; then
     mv "${BINLOG_META_TMP}" "${BACKUP_DIR}/meta/tables-binlog.json"
 fi
 
+# 若启用 gzip，则在备份完成后统一压缩 schema/ 与 data/ 目录下的 .sql 文件为 .sql.gz
+if [ "${ENABLE_GZIP}" -eq 1 ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 正在对备份文件进行 gzip 压缩..."
+    # 压缩表结构
+    find "${BACKUP_DIR}/schema" -type f -name '*.sql' -print0 2>/dev/null | while IFS= read -r -d '' f; do
+        [ -f "${f}" ] || continue
+        gzip -9 "${f}"
+    done
+    # 压缩表数据
+    find "${BACKUP_DIR}/data" -type f -name '*.sql' -print0 2>/dev/null | while IFS= read -r -d '' f; do
+        [ -f "${f}" ] || continue
+        gzip -9 "${f}"
+    done
+fi
+
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 备份完成！"
 echo "备份目录: ${BACKUP_DIR}"
 echo "  - 表结构: ${BACKUP_DIR}/schema/"
 echo "  - 表数据: ${BACKUP_DIR}/data/"
-echo "  - 拆分的表会生成 .split 标记文件，恢复时需按顺序执行对应 *_*.sql"
+echo "  - 拆分的表会生成 .split 标记文件，恢复时需按顺序执行对应 *_*.sql（或 *.sql.gz）"
 echo "  - 按行拆分的表：每个 INSERT 合并 ${INSERT_BATCH} 行以提升还原性能"
 echo "  - 日志: ${LOG_FILE}"
 

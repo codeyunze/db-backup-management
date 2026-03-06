@@ -123,6 +123,7 @@ def backup():
     - tables: 白名单表，逗号分隔（可选）
     - ignore_tables: 黑名单表，逗号分隔（可选）
     - clean_days: 清理 N 天前的备份，0 不清理（可选）
+    - enable_gzip: 是否启用 gzip 压缩（可选，默认 false）
     """
     try:
         data = request.get_json() or {}
@@ -153,6 +154,8 @@ def backup():
             args.extend(["-i", data["ignore_tables"]])
         if data.get("clean_days") is not None and int(data["clean_days"]) > 0:
             args.extend(["-c", str(int(data["clean_days"]))])
+        if data.get("enable_gzip"):
+            args.append("--gzip")
 
         success, stdout, stderr, returncode = _run_script("mysql-backup-schema-data.sh", args)
 
