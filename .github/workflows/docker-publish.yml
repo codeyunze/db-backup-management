@@ -60,9 +60,6 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/db-backup-management:${{ steps.meta.outputs.version }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/db-backup-management:latest
             registry.cn-guangzhou.aliyuncs.com/${{ secrets.ACR_NAMESPACE }}/db-backup-management:${{ steps.meta.outputs.version }}
-            registry.cn-guangzhou.aliyuncs.com/${{ secrets.ACR_NAMESPACE }}/db-backup-management:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
