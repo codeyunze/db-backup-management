@@ -50,6 +50,13 @@
 ==> **特别说明：本工具的“全量备份”是“按表全量”，而不是一次性全库快照**。  
 即：每个数据表在自己的 `mysqldump --single-transaction` 一致性快照事务里备份完毕，因此 **每张表的快照时间点并不完全相同** ，需要分别记录各自的 binlog 节点。
 
+- **当前实现简要说明**（2026-03）：  
+  - 已在 `mysql-backup-schema-data.sh` 中实现单表快照前记录 binlog 位点，并将所有表的快照位点统一写入全量备份目录的 `meta/tables-binlog.json`；  
+  - 已实现增量备份脚本 `mysql-backup-incremental.sh`，基于“全量备份 +（可选）最新增量的 `binlog_to`”自动选择起点，输出连续的增量链（全量 → inc1 → inc2 → …）；  
+  - 已实现增量还原脚本 `mysql-restore-incremental.sh` 与 HTTP 接口 `/db/backup-incremental`、`/db/incrementals`、`/db/restore`，并在 Web 界面中支持选择全量备份和某个增量节点，完成“全量 + 至该节点的所有增量”的组合还原；  
+  - 出于 MySQL binlog 语义限制，当前版本的增量还原仅支持“目标数据库名与备份时数据库名一致”，Web 界面已在库名不一致时自动禁止执行增量还原并给出提示；  
+  - 后续优化方向包括：更细粒度的按表增量回放、基于 `mysqlbinlog --rewrite-db` 的跨库安全还原等（如下文设计部分所述）。
+
 - **总体设计**：
   1. **单表全量备份时记录该表的快照位点**  
      - 在备份脚本中（`scripts/mysql-backup-schema-data.sh`），当前每张表是单独调用 `mysqldump --single-transaction` 进行“单表快照”备份；
