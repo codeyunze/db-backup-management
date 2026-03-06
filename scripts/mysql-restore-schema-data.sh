@@ -162,7 +162,9 @@ exec > >(tee -a "${LOG_FILE}") 2>&1
 
 set -e
 
-MYSQL_CMD="mysql -h${DB_HOST} -P${DB_PORT} -u${DB_USER} -p${DB_PASS} -N"
+# 通过环境变量传递密码，避免在命令行上暴露并消除 mysqld 提示
+export MYSQL_PWD="${DB_PASS}"
+MYSQL_CMD="mysql -h${DB_HOST} -P${DB_PORT} -u${DB_USER} -N"
 
 
 # 读取视图列表（备份时创建的 .views 文件）
@@ -233,6 +235,8 @@ restore_one_table() {
     fi
 }
 
+echo ""
+echo "======================================================================"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 日志文件: ${LOG_FILE}"
 if [ -n "${TARGET_TABLES}" ]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] 开始从 '${BACKUP_DIR}' 恢复数据库到 '${NEW_DB_NAME}'（仅表: ${TARGET_TABLES}）"

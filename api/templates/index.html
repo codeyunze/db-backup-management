@@ -389,6 +389,7 @@
                         <select id="restore-inc-dir" disabled>
                             <option value="">-- 如需恢复到包含增量的状态，可在此选择 --</option>
                         </select>
+                        <div id="restore-inc-hint" style="margin-top:4px;font-size:0.8rem;color:#d9534f;"></div>
                     </div>
                 </div>
                 <div class="form-row">
@@ -872,10 +873,12 @@
         // 根据所选全量备份目录加载对应的增量备份目录（供还原时选择，可选）
         async function loadRestoreIncrementals(fullBackupDir) {
             const selInc = document.getElementById('restore-inc-dir');
+            const hint = document.getElementById('restore-inc-hint');
             if (!selInc) return;
             if (!fullBackupDir) {
                 selInc.innerHTML = '<option value=\"\">-- 如需恢复到包含增量的状态，可在此选择 --</option>';
                 selInc.disabled = true;
+                if (hint) hint.textContent = '';
                 return;
             }
             try {
@@ -889,12 +892,47 @@
                     const opt = document.createElement('option');
                     opt.value = it.incrementalDir || it.dirName || '';
                     opt.textContent = it.dirName || it.incrementalDir || '';
+                    if (it.database) opt.dataset.db = it.database;
                     selInc.appendChild(opt);
                 });
                 selInc.disabled = list.length === 0;
+                if (hint) hint.textContent = '';
             } catch (e) {
                 selInc.innerHTML = '<option value=\"\">-- 加载增量列表失败 --</option>';
                 selInc.disabled = true;
+                if (hint) hint.textContent = '';
+            }
+        }
+
+        // 校验：若选择了增量备份目录且其数据库名与目标数据库名不一致，则禁用“执行还原”按钮并提示
+        function updateRestoreIncrementalAvailability() {
+            const selInc = document.getElementById('restore-inc-dir');
+            const targetDbInput = document.getElementById('restore-target-db');
+            const btn = document.getElementById('btn-restore');
+            const hint = document.getElementById('restore-inc-hint');
+            if (!selInc || !targetDbInput || !btn) return;
+
+            const targetDb = targetDbInput.value.trim();
+            const selValue = selInc.value;
+            let srcDb = '';
+            if (selValue) {
+                const opt = selInc.options[selInc.selectedIndex];
+                if (opt && opt.dataset && opt.dataset.db) {
+                    srcDb = opt.dataset.db.trim();
+                }
+            }
+
+            if (selValue && srcDb && targetDb && srcDb !== targetDb) {
+                btn.disabled = true;
+                if (hint) {
+                    hint.textContent = '暂时仅支持将增量还原到与备份时相同的数据库名（当前增量库名为 ' + srcDb + '）。';
+                }
+            } else {
+                // 只有在非执行中状态时才恢复按钮可用，避免与 doRestore 内部的 disabled 冲突
+                if (btn.textContent === '执行还原') {
+                    btn.disabled = false;
+                }
+                if (hint) hint.textContent = '';
             }
         }
 
@@ -906,6 +944,14 @@
             restoreBackupSelect.addEventListener('change', () => {
                 loadRestoreIncrementals(restoreBackupSelect.value);
             });
+        }
+        const restoreIncSelect = document.getElementById('restore-inc-dir');
+        if (restoreIncSelect) {
+            restoreIncSelect.addEventListener('change', updateRestoreIncrementalAvailability);
+        }
+        const restoreTargetDbInput = document.getElementById('restore-target-db');
+        if (restoreTargetDbInput) {
+            restoreTargetDbInput.addEventListener('input', updateRestoreIncrementalAvailability);
         }
         initCollapsibleCards();
 
