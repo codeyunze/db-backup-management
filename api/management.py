@@ -349,13 +349,13 @@ def _get_binlog_start_from_full_backup(full_backup_dir):
 def _get_last_incremental_end_position(full_backup_dir, database=None):
     """
     若该全量备份下已有增量备份，返回「最后一个增量」的结束位点（binlog_to），
-    作为下一次增量的起始位点。否则返回 (None, None)。
+    作为下一次增量的起始位点，使增量链连续：全量 → inc1 → inc2 → inc3 → ...
+    增量目录位于 full_backup_dir/incremental/ 下。
     返回 (binlog_file, binlog_pos) 或 (None, None)。
     """
-    incr_root = os.path.join(BACKUP_ROOT, "incremental")
+    incr_root = os.path.join(os.path.normpath(full_backup_dir), "incremental")
     if not os.path.isdir(incr_root):
         return None, None
-    full_norm = os.path.normpath(full_backup_dir)
     candidates = []
     for name in os.listdir(incr_root):
         path = os.path.join(incr_root, name)
@@ -363,17 +363,6 @@ def _get_last_incremental_end_position(full_backup_dir, database=None):
             continue
         db_name = name.split("_inc_", 1)[0]
         if database and db_name != database:
-            continue
-        meta_from_path = os.path.join(path, "meta", "binlog_from.json")
-        if not os.path.isfile(meta_from_path):
-            continue
-        try:
-            with open(meta_from_path, "r", encoding="utf-8") as f:
-                meta_from = json.load(f)
-        except Exception:
-            continue
-        base_full = meta_from.get("base_full_backup_dir") or meta_from.get("full_backup_dir")
-        if not base_full or os.path.normpath(base_full) != full_norm:
             continue
         meta_to_path = os.path.join(path, "meta", "binlog_to.json")
         if not os.path.isfile(meta_to_path):
@@ -385,13 +374,15 @@ def _get_last_incremental_end_position(full_backup_dir, database=None):
             continue
         bf = meta_to.get("binlog_file")
         bp = meta_to.get("binlog_pos")
-        ts = (meta_to.get("recorded_at") or meta_from.get("recorded_at") or "") + "|" + name
-        if bf and bp is not None:
-            candidates.append((ts, bf, int(bp)))
+        if bf is None or bp is None:
+            continue
+        ts = meta_to.get("recorded_at") or ""
+        candidates.append((ts or name, bf, int(bp)))
     if not candidates:
         return None, None
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    return candidates[0][1], candidates[0][2]
+    # 按时间升序，取最后一个（链尾）的结束位点
+    candidates.sort(key=lambda x: x[0])
+    return candidates[-1][1], candidates[-1][2]
 
 
 @app.route("/db/backup-incremental", methods=["POST"])
