@@ -2,7 +2,7 @@
 
 包含 MySQL 备份/还原脚本的 Docker 镜像，内置 mysql、mysqldump、Python3，提供 HTTP API 接口。
 
-![image-20260227143620819](images/image-20260227143620819.png)
+![image-20260306193234070](images/image-20260306193234070.png)
 
 
 ## 运行服务
@@ -34,9 +34,14 @@ docker run -d -p 8081:8081 \
 ### Web 管理界面
 
 访问 `http://localhost:8081/` 可使用可视化界面：
-- **新建备份**：填写数据库连接信息后执行备份
-- **备份列表**：查看已有备份，支持按数据库名筛选
-- **数据还原**：选择备份目录并填写目标数据库连接信息后执行还原
+- **新建备份**：支持 **全量备份** 与 **增量备份** 两种模式  
+  - 全量备份：对单个数据库按表进行一次完整备份  
+  - 增量备份：基于某次全量备份，按 binlog 位点生成从“上一次备份结束”到“当前”的变更 SQL，形成连续的增量链
+- **备份列表**：查看已有全量备份，支持按数据库名筛选，并可查看其后续增量备份列表
+- **数据还原**：  
+  - 仅选全量目录：执行全量还原  
+  - 同时选全量目录和增量目录：自动执行“全量 + 从第一个增量到所选增量（含）的所有增量”组合还原  
+  - 出于 binlog 还原语义限制，**增量还原目前仅支持还原到与备份时相同的数据库名**（UI 会在库名不一致时禁用“执行还原”按钮并给出提示）
 
 
 ## 自行构建镜像
@@ -71,7 +76,7 @@ docker build --build-arg APT_MIRROR=tsinghua -t db-backup-management:latest .
 curl -X POST http://localhost:8081/db/test-connection -H "Content-Type: application/json" -d '{"host":"127.0.0.1","port":3306,"user":"root","password":"密码","database":"mall"}'
 ```
 
-**POST /db/backup** - 执行备份
+**POST /db/backup** - 执行全量备份
 
 ```bash
 curl -X POST http://localhost:8081/db/backup -H "Content-Type: application/json" -d '{"host":"MySQL主机","port":3306,"user":"root","password":"密码","database":"mall","backup_dir":"/data/backup/mysql"}'
@@ -79,13 +84,61 @@ curl -X POST http://localhost:8081/db/backup -H "Content-Type: application/json"
 
 可选参数：`tables`（白名单表）、`ignore_tables`（黑名单表）、`clean_days`（清理 N 天前备份）
 
+**POST /db/backup-incremental** - 基于某次全量备份执行一次 binlog 增量备份
+
+```bash
+curl -X POST http://localhost:8081/db/backup-incremental \
+  -H "Content-Type: application/json" \
+  -d '{
+    "host": "MySQL主机",
+    "port": 3306,
+    "user": "root",
+    "password": "密码",
+    "database": "mall",
+    "full_backup_dir": "/data/backup/mysql/mall_20260302_222859"
+  }'
+```
+
+- 不传 `start_file` / `start_pos` 时，起始位点规则为：
+  - 若该全量备份目录下**已有增量备份**：从“最后一个增量”的 `meta/binlog_to.json` 中读取结束位点，作为本次增量的起点，形成连续增量链（全量 → inc1 → inc2 → …）；  
+  - 否则：从该全量备份目录的 `meta/tables-binlog.json` 中选择最新的记录作为起点。
+- 每次增量备份会在对应全量目录下创建：  
+  - `<full_backup_dir>/incremental/<db>_inc_YYYYMMDD_HHMMSS/changes.sql`  
+  - `meta/binlog_from.json`、`meta/binlog_to.json` 记录起止位点与时间。
+
+**GET /db/incrementals** - 查询某次全量备份下的增量备份列表
+
+```bash
+curl "http://localhost:8081/db/incrementals?full_backup_dir=/data/backup/mysql/mall_20260302_222859"
+```
+
+返回：该全量备份目录下 `incremental/` 子目录中的所有增量，包含：
+- `database`：增量所属数据库名
+- `incrementalDir`：增量目录绝对路径
+- `binlogFrom` / `binlogTo`：起始/结束位点及时间
+
 **POST /db/restore** - 执行还原
 
 ```bash
-curl -X POST http://localhost:8081/db/restore -H "Content-Type: application/json" -d '{"backup_dir":"/data/backup/mysql/mall_20250209_020000","target_db":"mall_restored","host":"MySQL主机","user":"root","password":"密码"}'
+curl -X POST http://localhost:8081/db/restore \
+  -H "Content-Type: application/json" \
+  -d '{
+    "backup_dir":"/data/backup/mysql/mall_20260302_222859",
+    "target_db":"mall",
+    "host":"MySQL主机",
+    "user":"root",
+    "password":"密码",
+    "incremental_dir":"/data/backup/mysql/mall_20260302_222859/incremental/mall_inc_20260303_101010"
+  }'
 ```
 
-可选参数：`tables`（仅恢复指定表）、`ignore_tables`（不恢复的表）、`overwrite_tables`（覆盖的表）
+- 不传 `incremental_dir`：仅执行全量还原；
+- 传入某个 `incremental_dir`：后端会：
+  - 在该全量备份目录下按时间升序获取所有增量目录；
+  - 从第一个增量开始一直到所选增量（含）形成一条连续链；
+  - 调用 `mysql-restore-incremental.sh`，内部先执行全量还原，再按顺序回放这条链上的每个 `changes.sql`。
+
+可选参数：`tables`（仅恢复指定表）、`ignore_tables`（不恢复的表）、`overwrite_tables`（覆盖的表）——仅在纯全量还原时生效，含增量还原时会忽略这些表级过滤。
 
 **GET /db/backups** - 查询已备份文件列表
 
@@ -147,7 +200,7 @@ curl -X DELETE "http://localhost:8081/db/backups/mall_20250209_020000"
 | `LOG_SIZE_LIMIT_MB` | `10` | 日志文件超过该大小（MB）时自动轮转为 `*.bak` 再继续写入 |
 
 
-### `mysql-restore-schema-data.sh`（还原脚本）
+### `mysql-restore-schema-data.sh`（全量还原脚本）
 
 - **功能**：从 `mysql-backup-schema-data.sh` 生成的备份目录中恢复数据库，支持表/视图分开还原、大表多文件顺序还原，以及按表名白名单 / 黑名单 / 覆盖策略控制。
 - **输入目录结构**：需要指向包含 `schema/`、`data/`、`backup.log`/`restore.log` 等文件的备份目录。
@@ -181,3 +234,36 @@ curl -X DELETE "http://localhost:8081/db/backups/mall_20250209_020000"
 | `DB_PASS` | `123456` | 默认密码，可通过命令行覆盖 |
 | `LOG_FILE` | 空 | 默认还原日志路径，通常保持为空使用备份目录下的 `restore.log` |
 | `LOG_SIZE_LIMIT_MB` | `10` | 日志文件超过该大小（MB）时自动轮转为 `*.bak` |
+
+> 日志行为：每次还原会在 `restore.log` 中追加一段带分隔线的记录；当“全量 + 增量还原”时，增量脚本会复用同一份 `restore.log`，整个流程日志连贯。
+
+### `mysql-backup-incremental.sh`（增量备份脚本）
+
+- **功能**：基于某次已完成的全量备份，从指定 binlog 起始位点开始抽取变更并生成增量 SQL 文件 `changes.sql`，同时记录起止位点元数据。
+- **目录结构**：  
+  - 全量备份目录：`/data/backup/mysql/<db>_YYYYMMDD_HHMMSS/`  
+  - 增量备份目录：`/data/backup/mysql/<db>_YYYYMMDD_HHMMSS/incremental/<db>_inc_YYYYMMDD_HHMMSS/`
+    - `changes.sql`：当前增量的 binlog 变更（按 `--database=<db>` 过滤）
+    - `meta/binlog_from.json`：起始 `binlog_file` / `binlog_pos` / `recorded_at` 等
+    - `meta/binlog_to.json`：结束 `binlog_file` / `binlog_pos` / `recorded_at` 等
+- **起点选择策略**（不显式指定 `--start-file/--start-pos` 时）：  
+  1. 若该全量目录下存在历史增量：从“最后一个增量的 `binlog_to`”开始，此时增量链为：**全量 → inc1 → inc2 → … → 本次 incN**；  
+  2. 若不存在历史增量：从全量备份目录 `meta/tables-binlog.json` 中记录的最新位点开始。
+- **调用方式**：
+  - 容器内直接执行：`bash /scripts/mysql-backup-incremental.sh [选项]`
+  - 通过 HTTP 接口：`POST /db/backup-incremental`。
+
+### `mysql-restore-incremental.sh`（全量 + 增量组合还原脚本）
+
+- **功能**：基于某次全量备份 + 一条连续的增量链，自动完成“先全量还原，再顺序回放增量变更”的组合还原。
+- **输入参数**（内部由 `/db/restore` 构造）：  
+  - `-b, --full-backup-dir`：全量备份目录  
+  - `-d, --database`：目标数据库名（当前版本要求与备份时数据库同名）  
+  - `-i, --incremental-dirs`：按时间顺序排列的一组增量目录，逗号分隔  
+  - 连接信息、日志路径等。
+- **核心步骤**：
+  1. 解析首个增量的 `meta/binlog_from.json` 获取来源数据库名；
+  2. 调用 `mysql-restore-schema-data.sh` 执行一次全量还原（日志写入同一个 `restore.log`）；
+  3. 对每个增量目录依次执行 `changes.sql`：
+     - 若来源库名与目标库名不同，会在应用前对 `changes.sql` 做轻量重写（调整 `USE \`db\`;` 和 `` `db`. `` 前缀），以尽量保证变更落在目标库；
+     - 受 MySQL binlog 语义影响，当前版本仍要求“增量还原仅支持同名库”，异名目标库仅作为内部过渡方案使用，UI 层已做限制。
