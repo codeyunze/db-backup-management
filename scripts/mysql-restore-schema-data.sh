@@ -158,7 +158,10 @@ fi
 
 [ -z "${LOG_FILE}" ] && LOG_FILE="${BACKUP_DIR}/restore.log"
 rotate_log_if_needed "${LOG_FILE}"
-exec > >(tee -a "${LOG_FILE}") 2>&1
+# 若未被外层脚本重定向，则自行 tee 到日志文件；否则沿用外层重定向，避免重复输出
+if [ -z "${RESTORE_LOG_REDIRECTED}" ]; then
+    exec > >(tee -a "${LOG_FILE}") 2>&1
+fi
 
 set -e
 

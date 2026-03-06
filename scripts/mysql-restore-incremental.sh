@@ -177,7 +177,7 @@ FULL_RESTORE_ARGS=(
 )
 [ -n "${LOG_FILE}" ] && FULL_RESTORE_ARGS+=(-l "${LOG_FILE}")
 
-"${RESTORE_FULL_SCRIPT}" "${FULL_RESTORE_ARGS[@]}"
+RESTORE_LOG_REDIRECTED=1 "${RESTORE_FULL_SCRIPT}" "${FULL_RESTORE_ARGS[@]}"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 全量还原完成。"
 
