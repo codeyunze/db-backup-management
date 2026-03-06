@@ -179,17 +179,14 @@ def backup():
 @app.route("/db/restore", methods=["POST"])
 def restore():
     """
-    执行数据库还原
+    执行数据库还原。
+    若传入 incremental_dir：先还原全量，再按顺序应用从第一个到所选（含）的增量。
     请求体 JSON：
-    - backup_dir: 备份目录路径，如 /data/backup/mysql/mall_20250209_020000（必填）
+    - backup_dir: 备份目录路径（必填）
     - target_db: 目标数据库名（必填）
-    - host: 数据库主机（必填）
-    - port: 端口，默认 3306
-    - user: 用户名（必填）
-    - password: 密码（必填）
-    - tables: 仅恢复指定表，逗号分隔（可选）
-    - ignore_tables: 不恢复的表，逗号分隔（可选）
-    - overwrite_tables: 覆盖的表，逗号分隔（可选）
+    - host, port, user, password（必填/可选）
+    - incremental_dir: 选中的增量备份目录（可选）；若填则执行全量+到该增量为止的所有增量
+    - tables, ignore_tables, overwrite_tables: 仅在全量还原时生效（可选）
     """
     try:
         data = request.get_json() or {}
@@ -198,6 +195,7 @@ def restore():
         host = data.get("host")
         user = data.get("user")
         password = data.get("password")
+        incremental_dir = (data.get("incremental_dir") or "").strip()
 
         if not all([backup_dir, target_db, host, user, password]):
             return jsonify({
@@ -206,23 +204,59 @@ def restore():
                 "data": None,
             }), 400
 
-        args = [
-            "-b", str(backup_dir),
-            "-d", str(target_db),
-            "-H", str(host),
-            "-P", str(data.get("port", "3306")),
-            "-u", str(user),
-            "-p", str(password),
-        ]
+        norm_backup = os.path.normpath(backup_dir)
+        port = str(data.get("port", "3306"))
 
-        if data.get("tables"):
-            args.extend(["-t", data["tables"]])
-        if data.get("ignore_tables"):
-            args.extend(["-i", data["ignore_tables"]])
-        if data.get("overwrite_tables"):
-            args.extend(["-o", data["overwrite_tables"]])
-
-        success, stdout, stderr, returncode = _run_script("mysql-restore-schema-data.sh", args)
+        if incremental_dir:
+            # 校验所选增量属于该全量备份，并得到「从第一个到所选（含）」的增量列表
+            norm_inc = os.path.normpath(incremental_dir)
+            incr_root = os.path.join(norm_backup, "incremental")
+            if not norm_inc.startswith(norm_backup + os.sep) or "incremental" not in norm_inc:
+                return jsonify({
+                    "code": 400,
+                    "msg": "所选增量备份目录不属于该全量备份",
+                    "data": None,
+                }), 400
+            all_incrs = _get_incremental_dirs_ordered(backup_dir)
+            # 统一用 normpath 比较
+            all_incrs_norm = [os.path.normpath(p) for p in all_incrs]
+            if norm_inc not in all_incrs_norm:
+                return jsonify({
+                    "code": 400,
+                    "msg": "未找到该增量备份或该增量不属于本全量备份",
+                    "data": None,
+                }), 400
+            idx = all_incrs_norm.index(norm_inc)
+            to_restore_incrs = all_incrs[: idx + 1]
+            incr_dirs_str = ",".join(to_restore_incrs)
+            log_file = os.path.join(backup_dir, "restore.log")
+            args = [
+                "-b", str(backup_dir),
+                "-d", str(target_db),
+                "-i", incr_dirs_str,
+                "-H", str(host),
+                "-P", port,
+                "-u", str(user),
+                "-p", str(password),
+                "-l", log_file,
+            ]
+            success, stdout, stderr, returncode = _run_script("mysql-restore-incremental.sh", args)
+        else:
+            args = [
+                "-b", str(backup_dir),
+                "-d", str(target_db),
+                "-H", str(host),
+                "-P", port,
+                "-u", str(user),
+                "-p", str(password),
+            ]
+            if data.get("tables"):
+                args.extend(["-t", data["tables"]])
+            if data.get("ignore_tables"):
+                args.extend(["-i", data["ignore_tables"]])
+            if data.get("overwrite_tables"):
+                args.extend(["-o", data["overwrite_tables"]])
+            success, stdout, stderr, returncode = _run_script("mysql-restore-schema-data.sh", args)
 
         if success:
             return jsonify({
@@ -242,6 +276,38 @@ def restore():
             "msg": str(e),
             "data": None,
         }), 500
+
+
+def _get_incremental_dirs_ordered(full_backup_dir, database=None):
+    """
+    返回某次全量备份下的增量目录列表，按时间升序（先产生的在前）。
+    用于还原时按顺序应用：全量 + 增量1 + 增量2 + ... + 所选增量。
+    返回: list[str] 增量目录绝对路径
+    """
+    incr_root = os.path.join(os.path.normpath(full_backup_dir), "incremental")
+    if not os.path.isdir(incr_root):
+        return []
+    items = []
+    for name in os.listdir(incr_root):
+        path = os.path.join(incr_root, name)
+        if not os.path.isdir(path) or "_inc_" not in name:
+            continue
+        db_name = name.split("_inc_", 1)[0]
+        if database and db_name != database:
+            continue
+        meta_from_path = os.path.join(path, "meta", "binlog_from.json")
+        if not os.path.isfile(meta_from_path):
+            continue
+        try:
+            with open(meta_from_path, "r", encoding="utf-8") as f:
+                meta_from = json.load(f)
+        except Exception:
+            continue
+        rec_at = (meta_from or {}).get("recorded_at") or ""
+        sort_key = rec_at or name
+        items.append((sort_key, path))
+    items.sort(key=lambda x: x[0])
+    return [p for _, p in items]
 
 
 def _get_binlog_start_from_full_backup(full_backup_dir):

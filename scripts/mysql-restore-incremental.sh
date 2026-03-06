@@ -152,16 +152,20 @@ if [ ! -x "${RESTORE_FULL_SCRIPT}" ]; then
   exit 1
 fi
 
-# 1. 先执行全量还原
+# 1. 先执行全量还原（若本脚本指定了 -l，则全量还原也写入同一日志文件）
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 步骤 1/2: 执行全量还原..."
 
-"${RESTORE_FULL_SCRIPT}" \
-  -b "${FULL_BACKUP_DIR}" \
-  -d "${TARGET_DB}" \
-  -H "${DB_HOST}" \
-  -P "${DB_PORT}" \
-  -u "${DB_USER}" \
+FULL_RESTORE_ARGS=(
+  -b "${FULL_BACKUP_DIR}"
+  -d "${TARGET_DB}"
+  -H "${DB_HOST}"
+  -P "${DB_PORT}"
+  -u "${DB_USER}"
   -p "${DB_PASS}"
+)
+[ -n "${LOG_FILE}" ] && FULL_RESTORE_ARGS+=(-l "${LOG_FILE}")
+
+"${RESTORE_FULL_SCRIPT}" "${FULL_RESTORE_ARGS[@]}"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 全量还原完成。"
 

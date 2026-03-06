@@ -841,6 +841,8 @@
                 user,
                 password
             };
+            const incDir = document.getElementById('restore-inc-dir').value.trim();
+            if (incDir) body.incremental_dir = incDir;
             const tables = document.getElementById('restore-tables').value.trim();
             const ignore = document.getElementById('restore-ignore').value.trim();
             const overwrite = document.getElementById('restore-overwrite').value.trim();
