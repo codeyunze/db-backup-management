@@ -143,6 +143,18 @@ echo "  - 目标库: ${TARGET_DB}"
 echo "  - 全量备份目录: ${FULL_BACKUP_DIR}"
 echo "  - 增量目录个数: ${#INCR_DIRS[@]}"
 
+# 尝试从首个增量的 meta/binlog_from.json 中解析原始数据库名（生成增量时使用的 DB_NAME）
+SRC_DB=""
+for inc_dir in "${INCR_DIRS[@]}"; do
+  [ -z "${inc_dir}" ] && continue
+  meta_from_file="${inc_dir}/meta/binlog_from.json"
+  if [ -f "${meta_from_file}" ]; then
+    SRC_DB=$(grep -m1 '"database"' "${meta_from_file}" 2>/dev/null | sed -E 's/.*"database"[[:space:]]*:[[:space:]]*"([^"\\]+)".*/\1/')
+    break
+  fi
+done
+[ -n "${SRC_DB}" ] && echo "  - 增量来源库: ${SRC_DB}"
+
 # 解析当前脚本所在目录，以便找到全量还原脚本
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESTORE_FULL_SCRIPT="${SCRIPT_DIR}/mysql-restore-schema-data.sh"
@@ -186,7 +198,22 @@ for inc_dir in "${INCR_DIRS[@]}"; do
     continue
   fi
   echo "  -> 回放增量: ${CHANGES_SQL}"
-  mysql -h"${DB_HOST}" -P"${DB_PORT}" -u"${DB_USER}" "${TARGET_DB}" < "${CHANGES_SQL}"
+
+  # 若增量来源库名与目标库不同，则在应用前对 changes.sql 做一次轻量重写：
+  # - 将 "USE `SRC_DB`;" 替换为 "USE `TARGET_DB`;"
+  # - 将 "`SRC_DB`." 前缀替换为 "`TARGET_DB`."，使 binlog 变更落在目标库
+  if [ -n "${SRC_DB}" ] && [ "${SRC_DB}" != "${TARGET_DB}" ]; then
+    TMP_SQL="${CHANGES_SQL}.tmp.$$"
+    sed -e "s/USE \`${SRC_DB}\`;/USE \`${TARGET_DB}\`;/Ig" \
+        -e "s/\`${SRC_DB}\`\./\`${TARGET_DB}\`./g" "${CHANGES_SQL}" > "${TMP_SQL}" || {
+      echo "  警告: 重写增量 SQL 失败，直接使用原始文件。"
+      TMP_SQL="${CHANGES_SQL}"
+    }
+    mysql -h"${DB_HOST}" -P"${DB_PORT}" -u"${DB_USER}" "${TARGET_DB}" < "${TMP_SQL}"
+    [ "${TMP_SQL}" != "${CHANGES_SQL}" ] && rm -f "${TMP_SQL}"
+  else
+    mysql -h"${DB_HOST}" -P"${DB_PORT}" -u"${DB_USER}" "${TARGET_DB}" < "${CHANGES_SQL}"
+  fi
 done
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 增量回放完成。"

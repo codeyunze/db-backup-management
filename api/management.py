@@ -211,7 +211,9 @@ def restore():
             # 校验所选增量属于该全量备份，并得到「从第一个到所选（含）」的增量列表
             norm_inc = os.path.normpath(incremental_dir)
             incr_root = os.path.join(norm_backup, "incremental")
-            if not norm_inc.startswith(norm_backup + os.sep) or "incremental" not in norm_inc:
+            # 仅允许使用当前全量备份目录下 incremental 子目录中的增量备份
+            incr_root_prefix = incr_root + os.sep
+            if not norm_inc.startswith(incr_root_prefix):
                 return jsonify({
                     "code": 400,
                     "msg": "所选增量备份目录不属于该全量备份",
@@ -231,6 +233,7 @@ def restore():
             incr_dirs_str = ",".join(to_restore_incrs)
             log_file = os.path.join(backup_dir, "restore.log")
             args = [
+                # 由增量还原脚本内部先调用全量还原，再顺序回放增量
                 "-b", str(backup_dir),
                 "-d", str(target_db),
                 "-i", incr_dirs_str,
