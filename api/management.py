@@ -19,6 +19,10 @@ app = Flask(__name__)
 # 脚本与备份根目录，支持环境变量覆盖（本地运行时可设置为本项目 scripts 与备份目录）
 SCRIPT_DIR = os.environ.get("SCRIPT_DIR", "/scripts")
 BACKUP_ROOT = os.environ.get("BACKUP_ROOT", "/data/backup/mysql")
+# 备份计划配置文件路径（JSON 持久化）
+BACKUP_PLANS_FILE = os.environ.get(
+    "BACKUP_PLANS_FILE", os.path.join(BACKUP_ROOT, "backup-plans.json")
+)
 
 # 备份目录命名格式：{数据库名}_YYYYMMDD_HHMMSS
 BACKUP_DIR_PATTERN = re.compile(r"^(.+)_(\d{8})_(\d{6})$")
@@ -51,6 +55,212 @@ def _run_script(script_name, args_list, timeout=None):
         return False, "", "执行超时", -1
     except Exception as e:
         return False, "", str(e), -1
+
+
+def _load_backup_plans():
+    """
+    从 JSON 文件加载备份计划列表。
+    返回列表，每个元素为 dict，至少包含 id/name 基本信息。
+    """
+    path = BACKUP_PLANS_FILE
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, list):
+            return []
+        # 过滤掉明显不合法的项
+        cleaned = []
+        for item in data:
+            if isinstance(item, dict) and item.get("id") and item.get("name"):
+                cleaned.append(item)
+        return cleaned
+    except Exception:
+        return []
+
+
+def _save_backup_plans(plans):
+    """
+    将备份计划列表写回 JSON 文件。
+    """
+    path = BACKUP_PLANS_FILE
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(plans, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, path)
+
+
+def _generate_plan_id():
+    """
+    简单生成一个字符串 ID（避免额外依赖 uuid 库）。
+    """
+    import time
+
+    return f"plan_{int(time.time() * 1000)}"
+
+
+@app.route("/backup-plans", methods=["GET"])
+def list_backup_plans():
+    """
+    列出所有备份计划（仅持久化配置，不负责执行）。
+    """
+    plans = _load_backup_plans()
+    # 为安全起见，默认不回显密码字段
+    safe_plans = []
+    for p in plans:
+        q = dict(p)
+        if "password" in q:
+            q["password"] = None
+        safe_plans.append(q)
+    return jsonify({"code": 200, "msg": "ok", "data": {"items": safe_plans}}), 200
+
+
+@app.route("/backup-plans", methods=["POST"])
+def create_backup_plan():
+    """
+    创建一个新的备份计划。
+    请求体 JSON 建议字段：
+    - name: 计划名称（必填，唯一或业务上区分）
+    - host, port, user, password, database: 数据库连接信息（必填）
+    - backup_dir: 备份根目录（可选，默认 BACKUP_ROOT）
+    - tables, ignore_tables, clean_days, enable_gzip, mode 等（可选）
+    """
+    try:
+        data = request.get_json() or {}
+        name = (data.get("name") or "").strip()
+        host = (data.get("host") or "").strip()
+        user = (data.get("user") or "").strip()
+        password = data.get("password") or ""
+        database = (data.get("database") or "").strip()
+        if not all([name, host, user, database]):
+            return (
+                jsonify(
+                    {
+                        "code": 400,
+                        "msg": "缺少必要参数: name, host, user, database",
+                        "data": None,
+                    }
+                ),
+                400,
+            )
+        plans = _load_backup_plans()
+        # 简单防重复：同名计划不允许重复创建
+        for p in plans:
+            if p.get("name") == name:
+                return (
+                    jsonify(
+                        {
+                            "code": 400,
+                            "msg": "已存在同名备份计划",
+                            "data": None,
+                        }
+                    ),
+                    400,
+                )
+        plan_id = _generate_plan_id()
+        plan = {
+            "id": plan_id,
+            "name": name,
+            "host": host,
+            "port": int(data.get("port") or 3306),
+            "user": user,
+            "password": password,
+            "database": database,
+            "backup_dir": data.get("backup_dir") or BACKUP_ROOT,
+            "tables": data.get("tables") or "",
+            "ignore_tables": data.get("ignore_tables") or "",
+            "clean_days": int(data.get("clean_days") or 0),
+            "enable_gzip": bool(data.get("enable_gzip") or False),
+            # 备份模式占位：full_only / incremental_only / smart_full_and_incremental
+            "mode": data.get("mode") or "full_only",
+        }
+        plans.append(plan)
+        _save_backup_plans(plans)
+        # 返回时隐藏密码
+        safe_plan = dict(plan)
+        safe_plan["password"] = None
+        return jsonify({"code": 200, "msg": "创建成功", "data": safe_plan}), 200
+    except Exception as e:
+        return jsonify({"code": 500, "msg": str(e), "data": None}), 500
+
+
+@app.route("/backup-plans/<plan_id>", methods=["PUT"])
+def update_backup_plan(plan_id):
+    """
+    更新指定备份计划。
+    - 支持部分字段更新；未提供的字段保持不变。
+    - 密码字段 password 如需更新，请显式传入新值；否则保持原值。
+    """
+    try:
+        data = request.get_json() or {}
+        plans = _load_backup_plans()
+        found = False
+        for p in plans:
+            if p.get("id") == plan_id:
+                found = True
+                # 可更新字段
+                for key in [
+                    "name",
+                    "host",
+                    "port",
+                    "user",
+                    "database",
+                    "backup_dir",
+                    "tables",
+                    "ignore_tables",
+                    "clean_days",
+                    "enable_gzip",
+                    "mode",
+                ]:
+                    if key in data and data[key] is not None:
+                        if key in ("port", "clean_days"):
+                            try:
+                                p[key] = int(data[key])
+                            except Exception:
+                                continue
+                        else:
+                            p[key] = data[key]
+                # 密码单独处理：允许显式更新或保持原值
+                if "password" in data and data["password"] is not None:
+                    p["password"] = data["password"]
+                break
+        if not found:
+            return (
+                jsonify({"code": 404, "msg": "未找到指定备份计划", "data": None}),
+                404,
+            )
+        _save_backup_plans(plans)
+        safe_plan = None
+        for p in plans:
+            if p.get("id") == plan_id:
+                safe_plan = dict(p)
+                if "password" in safe_plan:
+                    safe_plan["password"] = None
+                break
+        return jsonify({"code": 200, "msg": "更新成功", "data": safe_plan}), 200
+    except Exception as e:
+        return jsonify({"code": 500, "msg": str(e), "data": None}), 500
+
+
+@app.route("/backup-plans/<plan_id>", methods=["DELETE"])
+def delete_backup_plan(plan_id):
+    """
+    删除指定备份计划。
+    """
+    try:
+        plans = _load_backup_plans()
+        new_plans = [p for p in plans if p.get("id") != plan_id]
+        if len(new_plans) == len(plans):
+            return (
+                jsonify({"code": 404, "msg": "未找到指定备份计划", "data": None}),
+                404,
+            )
+        _save_backup_plans(new_plans)
+        return jsonify({"code": 200, "msg": "删除成功", "data": None}), 200
+    except Exception as e:
+        return jsonify({"code": 500, "msg": str(e), "data": None}), 500
 
 
 @app.route("/db/test-connection", methods=["POST"])

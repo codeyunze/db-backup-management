@@ -365,6 +365,7 @@
                     <div class="form-group actions">
                         <button class="btn btn-secondary" id="btn-test-backup" onclick="testConnectionBackup()">测试连接</button>
                         <button class="btn" id="btn-backup" onclick="doBackup()">执行备份</button>
+                        <button class="btn btn-secondary" id="btn-save-plan" onclick="saveBackupPlan()" style="margin-left:8px;">保存连接信息</button>
                     </div>
                 </div>
                 <p style="color:#8c959f;font-size:0.8rem;margin-top:4px;">
@@ -464,6 +465,34 @@
                     <tbody id="backup-tbody"></tbody>
                 </table>
                 <div id="backup-empty" class="empty-state" style="display:none;">暂无备份</div>
+            </div>
+        </div>
+
+        <!-- 数据库实例信息（备份计划） -->
+        <div class="card">
+            <div class="card-header collapsible-header">
+                <span>数据库实例信息（备份计划）</span>
+                <span>
+                    <button class="btn btn-secondary btn-sm" onclick="loadBackupPlans()">刷新</button>
+                </span>
+            </div>
+            <div class="card-body">
+                <table id="plans-table">
+                    <thead>
+                        <tr>
+                            <th>名称</th>
+                            <th>主机</th>
+                            <th>端口</th>
+                            <th>数据库</th>
+                            <th>用户名</th>
+                            <th>密码</th>
+                            <th>备份目录</th>
+                            <th>gzip</th>
+                        </tr>
+                    </thead>
+                    <tbody id="plans-tbody"></tbody>
+                </table>
+                <div id="plans-empty" class="empty-state" style="display:none;">暂无已保存的备份计划</div>
             </div>
         </div>
 
@@ -749,6 +778,94 @@
             }
         }
 
+        // 保存当前“新建备份”表单中的连接信息与备份参数为一个备份计划
+        async function saveBackupPlan() {
+            const host = document.getElementById('backup-host').value.trim();
+            const user = document.getElementById('backup-user').value.trim();
+            const password = document.getElementById('backup-password').value;
+            const database = document.getElementById('backup-database').value.trim();
+            const name = prompt('请输入此数据库实例配置的名称（例如 mall-prod 或 mall-test）：', database || '');
+            if (!name) return;
+            if (!host || !user || !database) {
+                toast('请先填写主机、用户名、数据库名，再保存连接信息', 'error');
+                return;
+            }
+            const clean = parseInt(document.getElementById('backup-clean').value) || 0;
+            const gzipCheckbox = document.getElementById('backup-gzip');
+            const tables = document.getElementById('backup-tables').value.trim();
+            const ignore = document.getElementById('backup-ignore').value.trim();
+            const body = {
+                name,
+                host,
+                port: document.getElementById('backup-port').value || '3306',
+                user,
+                password,
+                database,
+                backup_dir: '/data/backup/mysql',
+                tables: tables || '',
+                ignore_tables: ignore || '',
+                clean_days: clean,
+                enable_gzip: !!(gzipCheckbox && gzipCheckbox.checked),
+                mode: 'full_only'
+            };
+            const btn = document.getElementById('btn-save-plan');
+            btn.disabled = true;
+            btn.textContent = '保存中...';
+            try {
+                const r = await fetch('/backup-plans', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const j = await r.json();
+                if (j.code === 200) {
+                    toast('保存连接信息成功');
+                    loadBackupPlans();
+                } else {
+                    toast('保存失败: ' + (j.msg || ''), 'error');
+                }
+            } catch (e) {
+                toast('请求失败: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '保存连接信息';
+            }
+        }
+
+        async function loadBackupPlans() {
+            const tbody = document.getElementById('plans-tbody');
+            const empty = document.getElementById('plans-empty');
+            if (!tbody || !empty) return;
+            tbody.innerHTML = '';
+            empty.style.display = 'none';
+            try {
+                const r = await fetch('/backup-plans');
+                const j = await r.json();
+                const items = (j.code === 200 && j.data && (j.data.items || [])) || [];
+                const esc = s => ('' + s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+                items.forEach(it => {
+                    const tr = document.createElement('tr');
+                    const pwdMask = it.password ? '••••••' : '••••••';
+                    tr.innerHTML =
+                        '<td>' + esc(it.name || '') + '</td>' +
+                        '<td>' + esc(it.host || '') + '</td>' +
+                        '<td>' + esc(it.port || '') + '</td>' +
+                        '<td>' + esc(it.database || '') + '</td>' +
+                        '<td>' + esc(it.user || '') + '</td>' +
+                        '<td>' + pwdMask + '</td>' +
+                        '<td>' + esc(it.backup_dir || '') + '</td>' +
+                        '<td>' + (it.enable_gzip ? '是' : '否') + '</td>';
+                    tbody.appendChild(tr);
+                });
+                if (!items.length) {
+                    empty.style.display = 'block';
+                }
+            } catch (e) {
+                empty.style.display = 'block';
+                empty.textContent = '加载失败: ' + e.message;
+            }
+        }
+
         // 备份类型切换：样式、增量块显示；表过滤行始终显示，增量时为只读并随全量目录加载
         function updateBackupTypeUI() {
             const type = document.querySelector('input[name="backup-type"]:checked')?.value || 'full';
@@ -953,6 +1070,8 @@
                 loadRestoreIncrementals(restoreBackupSelect.value);
             });
         }
+        // 初始加载一次备份计划列表
+        loadBackupPlans();
         const restoreIncSelect = document.getElementById('restore-inc-dir');
         if (restoreIncSelect) {
             restoreIncSelect.addEventListener('change', updateRestoreIncrementalAvailability);
