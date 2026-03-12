@@ -133,6 +133,38 @@ if [ ! -d "${FULL_BACKUP_DIR}" ]; then
     exit 1
 fi
 
+# =============== 前置校验：binlog / binlog_format / 库名一致性 ===============
+
+# 通过环境变量传递密码，避免在命令行上暴露
+export MYSQL_PWD="${DB_PASS}"
+MYSQL_CMD="mysql -h${DB_HOST} -P${DB_PORT} -u${DB_USER} -N"
+
+# 1）检查是否开启 binlog
+BINLOG_ENABLED=$(${MYSQL_CMD} -e "SHOW VARIABLES LIKE 'log_bin';" 2>/dev/null | awk 'NR==1{print $2}')
+if [ "${BINLOG_ENABLED}" != "ON" ]; then
+    echo "错误: 当前 MySQL 实例未开启 binlog（log_bin=OFF），无法执行增量备份。"
+    echo "请在 MySQL 配置中开启 binlog（推荐 ROW 模式）后，再尝试增量备份。"
+    exit 1
+fi
+
+# 2）检查 binlog_format 是否为 ROW
+BINLOG_FORMAT=$(${MYSQL_CMD} -e "SHOW VARIABLES LIKE 'binlog_format';" 2>/dev/null | awk 'NR==1{print $2}')
+if [ "${BINLOG_FORMAT}" != "ROW" ]; then
+    echo "错误: 当前 binlog_format=${BINLOG_FORMAT:-未知}，本工具的增量备份仅支持 ROW 模式。"
+    echo "请将 binlog_format 调整为 ROW 后，再尝试增量备份。"
+    exit 1
+fi
+
+# 3）检查所属全量备份目录中的库名是否与本次增量数据库名一致
+BASE_NAME="$(basename "${FULL_BACKUP_DIR}")"
+# 全量目录命名为 <db>_YYYYMMDD_HHMMSS，去掉最后两个下划线片段即为库名
+BASE_DB="${BASE_NAME%_*_*}"
+if [ -n "${BASE_DB}" ] && [ "${BASE_DB}" != "${DB_NAME}" ]; then
+    echo "错误: 全量备份目录中的库名 (${BASE_DB}) 与本次增量备份的数据库名 (${DB_NAME}) 不一致，无法执行增量备份。"
+    echo "请确认选择了正确的全量备份目录，或在同一数据库名下执行全量 + 增量链路。"
+    exit 1
+fi
+
 # =============== 增量备份目录准备 ===============
 set -e
 
