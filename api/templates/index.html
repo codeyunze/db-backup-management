@@ -214,6 +214,18 @@
             width: 320px;
             white-space: nowrap;
         }
+        #plans-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+        #plans-table th,
+        #plans-table td {
+            width: 14.28%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
         .empty-state {
             padding: 40px;
             text-align: center;
@@ -468,10 +480,10 @@
             </div>
         </div>
 
-        <!-- 数据库实例信息（备份计划） -->
+        <!-- 数据库实例信息（连接配置，仅记录连接参数） -->
         <div class="card">
             <div class="card-header collapsible-header">
-                <span>数据库实例信息（备份计划）</span>
+                <span>数据库实例信息</span>
                 <span>
                     <button class="btn btn-secondary btn-sm" onclick="loadBackupPlans()">刷新</button>
                 </span>
@@ -485,9 +497,8 @@
                             <th>端口</th>
                             <th>数据库</th>
                             <th>用户名</th>
-                            <th>密码</th>
-                            <th>备份目录</th>
                             <th>gzip</th>
+                            <th>操作</th>
                         </tr>
                     </thead>
                     <tbody id="plans-tbody"></tbody>
@@ -534,9 +545,6 @@
             </div>
         </div>
     </div>
-
-    <script>
-        const API = '';
 
         // 卡片折叠：点击卡片头部可展开/收起对应 body
         function initCollapsibleCards() {
@@ -845,17 +853,23 @@
                 const esc = s => ('' + s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
                 items.forEach(it => {
                     const tr = document.createElement('tr');
-                    const pwdMask = it.password ? '••••••' : '••••••';
                     tr.innerHTML =
                         '<td>' + esc(it.name || '') + '</td>' +
                         '<td>' + esc(it.host || '') + '</td>' +
                         '<td>' + esc(it.port || '') + '</td>' +
                         '<td>' + esc(it.database || '') + '</td>' +
                         '<td>' + esc(it.user || '') + '</td>' +
-                        '<td>' + pwdMask + '</td>' +
-                        '<td>' + esc(it.backup_dir || '') + '</td>' +
-                        '<td>' + (it.enable_gzip ? '是' : '否') + '</td>';
+                        '<td>' + (it.enable_gzip ? '是' : '否') + '</td>' +
+                        '<td><button class="btn btn-secondary btn-sm btn-plan-del" data-id="' + esc(it.id || '') + '">删除</button></td>';
                     tbody.appendChild(tr);
+                });
+                tbody.querySelectorAll('.btn-plan-del').forEach(btn => {
+                    btn.onclick = () => {
+                        const id = btn.dataset.id;
+                        if (!id) return;
+                        if (!confirm('确定要删除该数据库实例信息吗？')) return;
+                        deleteBackupPlan(id);
+                    };
                 });
                 if (!items.length) {
                     empty.style.display = 'block';
@@ -863,6 +877,23 @@
             } catch (e) {
                 empty.style.display = 'block';
                 empty.textContent = '加载失败: ' + e.message;
+            }
+        }
+
+        async function deleteBackupPlan(id) {
+            try {
+                const r = await fetch('/backup-plans/' + encodeURIComponent(id), {
+                    method: 'DELETE'
+                });
+                const j = await r.json();
+                if (j.code === 200) {
+                    toast('删除成功');
+                    loadBackupPlans();
+                } else {
+                    toast('删除失败: ' + (j.msg || ''), 'error');
+                }
+            } catch (e) {
+                toast('请求失败: ' + e.message, 'error');
             }
         }
 
