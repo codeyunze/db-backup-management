@@ -428,7 +428,7 @@
         <!-- 数据还原 -->
         <div class="card">
             <div class="card-header collapsible-header">数据还原</div>
-            <div class="card-body">
+            <div class="card-body" style="display:none;">
                 <div class="form-row">
                     <div class="form-group" style="flex:2;">
                         <label>选择全量备份目录 *</label>
@@ -623,7 +623,8 @@
                 if (!icon) {
                     icon = document.createElement('span');
                     icon.className = 'card-toggle-icon';
-                    icon.textContent = '−';
+                    const initiallyHidden = body.style.display === 'none';
+                    icon.textContent = initiallyHidden ? '+' : '−';
                     header.appendChild(icon);
                 }
                 if (!label) {
@@ -632,7 +633,8 @@
                     label.style.marginLeft = '4px';
                     label.style.fontSize = '0.8rem';
                     label.style.color = '#57606a';
-                    label.textContent = '折叠';
+                    const initiallyHidden = body.style.display === 'none';
+                    label.textContent = initiallyHidden ? '展开' : '折叠';
                     header.appendChild(label);
                 }
                 header.addEventListener('click', (e) => {
@@ -908,6 +910,8 @@
                 toast('请填写主机、用户名、密码、数据库名', 'error');
                 return;
             }
+            const okConn = await ensureBackupConnectionOK();
+            if (!okConn) return;
             const cronInput = document.getElementById('backup-cron');
             const cronNameInput = document.getElementById('backup-cron-name');
             const cronExpr = cronInput ? cronInput.value.trim() : '';
@@ -1033,6 +1037,8 @@
                 toast('请先填写主机、用户名、数据库名，再保存实例信息', 'error');
                 return;
             }
+            const okConn = await ensureBackupConnectionOK();
+            if (!okConn) return;
             const clean = parseInt(document.getElementById('backup-clean').value) || 0;
             const gzipCheckbox = document.getElementById('backup-gzip');
             const cronInput = document.getElementById('backup-cron');
@@ -1219,6 +1225,8 @@
                 toast('请填写主机、用户名、密码、数据库名', 'error');
                 return;
             }
+            const okConn = await ensureBackupConnectionOK();
+            if (!okConn) return;
             const cronInput = document.getElementById('backup-cron');
             const cronNameInput = document.getElementById('backup-cron-name');
             const cronExpr = cronInput ? cronInput.value.trim() : '';
@@ -1510,6 +1518,8 @@
                 toast('请填写完整还原信息', 'error');
                 return;
             }
+            const okConn = await ensureRestoreConnectionOK();
+            if (!okConn) return;
             if (!confirm('确定要还原到数据库 "' + targetDb + '" 吗？此操作可能覆盖现有数据。')) return;
             const btn = document.getElementById('btn-restore');
             btn.disabled = true;
