@@ -1085,19 +1085,101 @@
                 const esc = s => ('' + (s ?? '')).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
                 items.forEach(it => {
                     const tr = document.createElement('tr');
+                    const enabled = it.enabled !== false;
+                    const nextRuns = enabled && it.cron_expr ? computeNextCronRuns(it.cron_expr, 1) : null;
+                    const nextText = nextRuns && nextRuns.length ? (function(d){ const pad=n=>n<10?'0'+n:''+n; return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes()); })(nextRuns[0]) : '-';
+                    const statusText = enabled ? '运行' : '停止';
+                    const runBtn = enabled ? '' : '<button class="btn btn-secondary btn-sm btn-job-run" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">运行</button> ';
+                    const stopBtn = enabled ? '<button class="btn btn-secondary btn-sm btn-job-stop" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">停止</button> ' : '';
+                    const delBtn = enabled ? '' : '<button class="btn btn-danger btn-sm btn-job-del" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">删除</button>';
                     tr.innerHTML =
                         '<td class="col-name">' + esc(it.name || '') + '</td>' +
                         '<td class="col-type">' + (it.backup_type === 'incremental' ? '增量' : '全量') + '</td>' +
                         '<td class="col-cron">' + esc(it.cron_expr || it.schedule || '') + '</td>' +
                         '<td class="col-last">' + esc(it.last_run_at || '-') + '</td>' +
-                        '<td class="col-next">' + esc(it.next_run_at || '-') + '</td>' +
-                        '<td class="col-status">' + (it.enabled === false ? '停用' : '启用') + '</td>' +
-                        '<td class="col-actions"><button class="btn btn-secondary btn-sm">编辑</button> <button class="btn btn-secondary btn-sm">删除</button></td>';
+                        '<td class="col-next">' + esc(nextText) + '</td>' +
+                        '<td class="col-status">' + statusText + '</td>' +
+                        '<td class="col-actions">' +
+                            '<button class="btn btn-secondary btn-sm btn-job-edit" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">编辑</button> ' +
+                            runBtn + stopBtn + delBtn +
+                        '</td>';
                     tbody.appendChild(tr);
+                });
+                // 绑定操作按钮事件
+                tbody.querySelectorAll('.btn-job-edit').forEach(btn => {
+                    btn.onclick = () => {
+                        const planId = btn.dataset.planId;
+                        const jobId = btn.dataset.jobId;
+                        const item = items.find(x => x.id === jobId && x.plan_id === planId);
+                        if (!item) return;
+                        const newName = prompt('请输入调度任务名称：', item.name || '');
+                        if (newName === null) return;
+                        const newCron = prompt('请输入 cron 表达式：', item.cron_expr || item.schedule || '');
+                        if (newCron === null) return;
+                        updateJob(planId, jobId, { name: newName.trim(), schedule: newCron.trim() });
+                    };
+                });
+                tbody.querySelectorAll('.btn-job-run').forEach(btn => {
+                    btn.onclick = () => {
+                        const planId = btn.dataset.planId;
+                        const jobId = btn.dataset.jobId;
+                        updateJob(planId, jobId, { enabled: true });
+                    };
+                });
+                tbody.querySelectorAll('.btn-job-stop').forEach(btn => {
+                    btn.onclick = () => {
+                        const planId = btn.dataset.planId;
+                        const jobId = btn.dataset.jobId;
+                        updateJob(planId, jobId, { enabled: false });
+                    };
+                });
+                tbody.querySelectorAll('.btn-job-del').forEach(btn => {
+                    btn.onclick = () => {
+                        const planId = btn.dataset.planId;
+                        const jobId = btn.dataset.jobId;
+                        if (!confirm('确定要删除该定时任务吗？')) return;
+                        deleteJob(planId, jobId);
+                    };
                 });
                 if (items.length === 0) empty.style.display = 'block';
             } catch (e) {
                 empty.style.display = 'block';
+            }
+        }
+
+        async function updateJob(planId, jobId, payload) {
+            try {
+                const r = await fetch('/backup-plans/' + encodeURIComponent(planId) + '/jobs/' + encodeURIComponent(jobId), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload || {})
+                });
+                const j = await r.json().catch(() => ({}));
+                if (j.code === 200) {
+                    toast('定时任务已更新');
+                    loadScheduledTasks();
+                } else {
+                    toast('更新定时任务失败: ' + (j.msg || ''), 'error');
+                }
+            } catch (e) {
+                toast('更新定时任务失败: ' + e.message, 'error');
+            }
+        }
+
+        async function deleteJob(planId, jobId) {
+            try {
+                const r = await fetch('/backup-plans/' + encodeURIComponent(planId) + '/jobs/' + encodeURIComponent(jobId), {
+                    method: 'DELETE'
+                });
+                const j = await r.json().catch(() => ({}));
+                if (j.code === 200) {
+                    toast('定时任务已删除');
+                    loadScheduledTasks();
+                } else {
+                    toast('删除定时任务失败: ' + (j.msg || ''), 'error');
+                }
+            } catch (e) {
+                toast('删除定时任务失败: ' + e.message, 'error');
             }
         }
 

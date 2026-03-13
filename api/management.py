@@ -332,6 +332,12 @@ def create_backup_job(plan_id):
                         if data.get("enable_gzip") is not None
                         else p.get("enable_gzip") or False
                     ),
+                    # 初始默认为运行状态，可在前端切换运行/停止
+                    "enabled": bool(
+                        data.get("enabled")
+                        if data.get("enabled") is not None
+                        else True
+                    ),
                     "created_at": time.strftime(
                         "%Y-%m-%d %H:%M:%S", time.localtime()
                     ),
@@ -472,6 +478,9 @@ def list_scheduled_tasks():
                 clean_days = j.get("clean_days")
                 enable_gzip = j.get("enable_gzip")
                 created_at = j.get("created_at") or "-"
+                enabled = j.get("enabled")
+                if enabled is None:
+                    enabled = True
                 items.append(
                     {
                         "id": j_id,
@@ -487,12 +496,116 @@ def list_scheduled_tasks():
                         "created_at": created_at,
                         "last_run_at": "-",
                         "next_run_at": "-",
-                        "enabled": True,
+                        "enabled": enabled,
                     }
                 )
         return jsonify({"code": 200, "msg": "ok", "data": {"items": items}}), 200
     except Exception as e:
         return jsonify({"code": 500, "msg": str(e), "data": {"items": []}}), 500
+
+
+@app.route("/backup-plans/<plan_id>/jobs/<job_id>", methods=["PUT"])
+def update_backup_job(plan_id, job_id):
+    """
+    更新指定备份计划下的一条定时任务。
+    可更新字段：name, schedule, backup_type, tables, ignore_tables, clean_days, enable_gzip, enabled。
+    """
+    try:
+        data = request.get_json() or {}
+        plans = _load_backup_plans()
+        found = False
+        for p in plans:
+            if p.get("id") != plan_id:
+                continue
+            jobs = p.get("jobs") or []
+            if not isinstance(jobs, list):
+                jobs = []
+            for j in jobs:
+                if j.get("id") != job_id:
+                    continue
+                found = True
+                for key in [
+                    "name",
+                    "schedule",
+                    "backup_type",
+                    "tables",
+                    "ignore_tables",
+                    "clean_days",
+                    "enable_gzip",
+                    "enabled",
+                ]:
+                    if key in data and data[key] is not None:
+                        if key == "clean_days":
+                            try:
+                                j[key] = int(data[key])
+                            except Exception:
+                                continue
+                        elif key in ("enable_gzip", "enabled"):
+                            j[key] = bool(data[key])
+                        else:
+                            j[key] = data[key]
+                break
+            p["jobs"] = jobs
+            if found:
+                break
+        if not found:
+            return (
+                jsonify({"code": 404, "msg": "未找到指定定时任务", "data": None}),
+                404,
+            )
+        _save_backup_plans(plans)
+        return jsonify({"code": 200, "msg": "更新定时任务成功", "data": None}), 200
+    except Exception as e:
+        return jsonify({"code": 500, "msg": str(e), "data": None}), 500
+
+
+@app.route("/backup-plans/<plan_id>/jobs/<job_id>", methods=["DELETE"])
+def delete_backup_job(plan_id, job_id):
+    """
+    删除指定备份计划下的一条定时任务。
+    若任务处于运行状态（enabled=True），不允许删除。
+    """
+    try:
+        plans = _load_backup_plans()
+        found = False
+        enabled = False
+        for p in plans:
+            if p.get("id") != plan_id:
+                continue
+            jobs = p.get("jobs") or []
+            if not isinstance(jobs, list):
+                jobs = []
+            new_jobs = []
+            for j in jobs:
+                if j.get("id") == job_id:
+                    found = True
+                    enabled = bool(j.get("enabled", True))
+                    # 不立即删除，先根据状态判断
+                    continue
+                new_jobs.append(j)
+            if found:
+                if enabled:
+                    return (
+                        jsonify(
+                            {
+                                "code": 400,
+                                "msg": "运行中的定时任务不能删除，请先停止任务。",
+                                "data": None,
+                            }
+                        ),
+                        400,
+                    )
+                p["jobs"] = new_jobs
+                break
+        if not found:
+            return (
+                jsonify({"code": 404, "msg": "未找到指定定时任务", "data": None}),
+                404,
+            )
+        _save_backup_plans(plans)
+        return jsonify({"code": 200, "msg": "删除定时任务成功", "data": None}), 200
+    except Exception as e:
+        return jsonify({"code": 500, "msg": str(e), "data": None}), 500
 
 
 @app.route("/db/test-connection", methods=["POST"])
