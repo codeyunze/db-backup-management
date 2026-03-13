@@ -234,17 +234,14 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
 
             # 构造备份脚本命令：
             # - 显式设置 PATH，确保 cron 环境能找到 /usr/local/bin 下的 mysql/mysqldump
-            # - 使用 MYSQL_PWD 传递密码避免出现在参数中
-            # 假设 mysql-backup-schema-data.sh 支持以下参数：
-            #   -h <host> -P <port> -u <user> -d <database>
-            #   --tables <...> --ignore-tables <...> --clean-days <n> --gzip
+            # - 密码作为普通参数传递给脚本，由脚本内部统一处理
             parts = [
                 'PATH="/usr/local/bin:/usr/bin:/bin:$PATH"',
-                f'MYSQL_PWD="{password}"',
                 "/scripts/mysql-backup-schema-data.sh",
                 f"-H {host}",
                 f"-P {port}",
                 f"-u {user}",
+                f'-p "{password}"',
                 f"-d {database}",
             ]
             if tables:
