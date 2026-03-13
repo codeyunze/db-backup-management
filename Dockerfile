@@ -19,6 +19,7 @@ RUN apt-get update \
         python3 \
         python3-flask \
         bash \
+        vim-tiny \
         gzip \
         ca-certificates \
         tzdata \
