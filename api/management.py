@@ -101,6 +101,15 @@ def _generate_plan_id():
     return f"plan_{int(time.time() * 1000)}"
 
 
+def _generate_job_id():
+    """
+    简单生成一个定时任务 ID。
+    """
+    import time
+
+    return f"job_{int(time.time() * 1000)}"
+
+
 @app.route("/backup-plans", methods=["GET"])
 def list_backup_plans():
     """
@@ -173,8 +182,13 @@ def create_backup_plan():
             "ignore_tables": data.get("ignore_tables") or "",
             "clean_days": int(data.get("clean_days") or 0),
             "enable_gzip": bool(data.get("enable_gzip") or False),
+            "schedule": (data.get("schedule") or data.get("cron_expr") or "").strip()
+            if isinstance(data.get("schedule") or data.get("cron_expr") or "", str)
+            else "",
             # 备份模式占位：full_only / incremental_only / smart_full_and_incremental
             "mode": data.get("mode") or "full_only",
+            # 针对该连接配置下的定时任务列表
+            "jobs": [],
         }
         plans.append(plan)
         _save_backup_plans(plans)
@@ -212,6 +226,7 @@ def update_backup_plan(plan_id):
                     "ignore_tables",
                     "clean_days",
                     "enable_gzip",
+                    "schedule",
                     "mode",
                 ]:
                     if key in data and data[key] is not None:
@@ -259,6 +274,85 @@ def delete_backup_plan(plan_id):
             )
         _save_backup_plans(new_plans)
         return jsonify({"code": 200, "msg": "删除成功", "data": None}), 200
+    except Exception as e:
+        return jsonify({"code": 500, "msg": str(e), "data": None}), 500
+
+
+@app.route("/backup-plans/<plan_id>/jobs", methods=["POST"])
+def create_backup_job(plan_id):
+    """
+    在指定备份实例（plan）下新增一个定时任务记录。
+
+    请求体示例：
+    {
+        "schedule": "0 0 12 * *",
+        "backup_type": "full",        # full / incremental
+        "tables": "user,order",
+        "ignore_tables": "order_log",
+        "clean_days": 7,
+        "enable_gzip": true
+    }
+
+    这里只负责把“执行计划”及当时的备份参数持久化到 backup-plans.json，不负责真正写入 crontab。
+    """
+    try:
+        data = request.get_json() or {}
+        schedule = (data.get("schedule") or "").strip()
+        if not schedule:
+            return (
+                jsonify({"code": 400, "msg": "缺少调度策略 schedule", "data": None}),
+                400,
+            )
+        backup_type = (data.get("backup_type") or "full").strip() or "full"
+        plans = _load_backup_plans()
+        found = False
+        for p in plans:
+            if p.get("id") == plan_id:
+                found = True
+                jobs = p.get("jobs") or []
+                if not isinstance(jobs, list):
+                    jobs = []
+                job_id = _generate_job_id()
+                import time
+
+                job = {
+                    "id": job_id,
+                    "schedule": schedule,
+                    "backup_type": backup_type,
+                    "tables": data.get("tables") or p.get("tables") or "",
+                    "ignore_tables": data.get("ignore_tables")
+                    or p.get("ignore_tables")
+                    or "",
+                    "clean_days": int(data.get("clean_days") or p.get("clean_days") or 0),
+                    "enable_gzip": bool(
+                        data.get("enable_gzip")
+                        if data.get("enable_gzip") is not None
+                        else p.get("enable_gzip") or False
+                    ),
+                    "created_at": time.strftime(
+                        "%Y-%m-%d %H:%M:%S", time.localtime()
+                    ),
+                }
+                jobs.append(job)
+                p["jobs"] = jobs
+                break
+        if not found:
+            return (
+                jsonify({"code": 404, "msg": "未找到指定备份计划", "data": None}),
+                404,
+            )
+        _save_backup_plans(plans)
+        safe_plan = None
+        for p in plans:
+            if p.get("id") == plan_id:
+                safe_plan = dict(p)
+                if "password" in safe_plan:
+                    safe_plan["password"] = None
+                break
+        return (
+            jsonify({"code": 200, "msg": "创建定时任务成功", "data": safe_plan}),
+            200,
+        )
     except Exception as e:
         return jsonify({"code": 500, "msg": str(e), "data": None}), 500
 

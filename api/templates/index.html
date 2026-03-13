@@ -238,15 +238,13 @@
             white-space: nowrap;
             padding: 8px;
         }
-        #scheduled-tasks-table .col-name { width: 12%; }
-        #scheduled-tasks-table .col-db { width: 10%; }
-        #scheduled-tasks-table .col-type { width: 8%; }
-        #scheduled-tasks-table .col-cron { width: 14%; }
-        #scheduled-tasks-table .col-clean { width: 12%; }
-        #scheduled-tasks-table .col-last { width: 12%; }
-        #scheduled-tasks-table .col-next { width: 12%; }
+        #scheduled-tasks-table .col-name { width: 18%; }
+        #scheduled-tasks-table .col-type { width: 10%; }
+        #scheduled-tasks-table .col-cron { width: 16%; }
+        #scheduled-tasks-table .col-last { width: 14%; }
+        #scheduled-tasks-table .col-next { width: 14%; }
         #scheduled-tasks-table .col-status { width: 8%; }
-        #scheduled-tasks-table .col-actions { width: 12%; }
+        #scheduled-tasks-table .col-actions { width: 20%; }
         .empty-state {
             padding: 40px;
             text-align: center;
@@ -316,13 +314,21 @@
     <div class="container">
         <h1>MySQL 备份管理</h1>
 
-        <!-- 新建备份 -->
+        <!-- 数据备份 -->
         <div class="card">
             <div class="card-header collapsible-header">
-                新建备份
+                数据备份
                 <span class="badge badge-primary">支持全量 / 增量</span>
             </div>
             <div class="card-body">
+                <div class="form-row">
+                    <div class="form-group" style="flex:2;">
+                        <label>选择数据库实例信息</label>
+                        <select id="backup-plan-select">
+                            <option value="">-- 请选择或手动填写下方信息 --</option>
+                        </select>
+                    </div>
+                </div>
                 <div class="form-row">
                     <div class="form-group" style="width:100%;">
                         <label>备份类型</label>
@@ -395,10 +401,17 @@
                     </div>
                 </div>
                 <div class="form-row">
+                    <div class="form-group" style="flex:2;">
+                        <label>调度策略（cron 表达式）</label>
+                        <input type="text" id="backup-cron" placeholder="如 0 * * * * 表示每小时整点执行">
+                        <small id="backup-cron-preview" style="display:block;margin-top:4px;font-size:0.8rem;color:#8c959f;"></small>
+                    </div>
+                </div>
+                <div class="form-row">
                     <div class="form-group actions">
                         <button class="btn btn-secondary" id="btn-test-backup" onclick="testConnectionBackup()">测试连接</button>
                         <button class="btn" id="btn-backup" onclick="doBackup()">执行备份</button>
-                        <button class="btn btn-secondary" id="btn-save-plan" onclick="saveBackupPlan()" style="margin-left:8px;">保存连接信息</button>
+                        <button class="btn btn-secondary" id="btn-save-plan" onclick="saveBackupPlan()">保存实例信息</button>
                     </div>
                 </div>
                 <p style="color:#8c959f;font-size:0.8rem;margin-top:4px;">
@@ -488,10 +501,8 @@
                     <thead>
                         <tr>
                             <th class="col-name">任务名称</th>
-                            <th class="col-db">数据库</th>
                             <th class="col-type">备份类型</th>
                             <th class="col-cron">执行周期</th>
-                            <th class="col-clean">清理策略</th>
                             <th class="col-last">上次执行时间</th>
                             <th class="col-next">下次执行时间</th>
                             <th class="col-status">状态</th>
@@ -632,6 +643,118 @@
             return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
         }
 
+        function parseCronField(field, min, max) {
+            const values = new Set();
+            if (field === '*') {
+                for (let i = min; i <= max; i++) values.add(i);
+                return values;
+            }
+            const parts = field.split(',');
+            for (const part of parts) {
+                if (!part) continue;
+                // 支持 */n、a/b、a-b/c 这几种常见写法
+                const stepMatch = part.match(/^(\*|\d+)(?:\/(\d+))?$/);
+                if (stepMatch) {
+                    const startRaw = stepMatch[1];
+                    const stepRaw = stepMatch[2];
+                    const start = startRaw === '*' ? min : parseInt(startRaw, 10);
+                    const step = stepRaw ? parseInt(stepRaw, 10) : null;
+                    if (!isNaN(start) && start >= min && start <= max) {
+                        if (step && step > 0) {
+                            for (let i = start; i <= max; i += step) values.add(i);
+                        } else {
+                            values.add(start);
+                        }
+                    }
+                    continue;
+                }
+                const rangeMatch = part.match(/^(\d+)-(\d+)(?:\/(\d+))?$/);
+                if (rangeMatch) {
+                    let start = parseInt(rangeMatch[1], 10);
+                    let end = parseInt(rangeMatch[2], 10);
+                    const step = rangeMatch[3] ? parseInt(rangeMatch[3], 10) : 1;
+                    if (!isNaN(start) && !isNaN(end) && step > 0) {
+                        start = Math.max(min, start);
+                        end = Math.min(max, end);
+                        for (let i = start; i <= end; i += step) values.add(i);
+                    }
+                    continue;
+                }
+                const v = parseInt(part, 10);
+                if (!isNaN(v) && v >= min && v <= max) values.add(v);
+            }
+            return values;
+        }
+
+        function computeNextCronRuns(expr, count) {
+            const parts = expr.trim().split(/\s+/);
+            if (parts.length !== 5) return null;
+            // 标准 cron：分 时 日 月 周
+            const [minF, hourF, domF, monthF, dowF] = parts;
+            const minutes = parseCronField(minF, 0, 59);
+            const hours = parseCronField(hourF, 0, 23);
+            const doms = domF === '*' ? null : parseCronField(domF, 1, 31);
+            const months = monthF === '*' ? null : parseCronField(monthF, 1, 12);
+            const dows = dowF === '*' ? null : parseCronField(dowF, 0, 6);
+
+            if (!minutes.size || !hours.size) return null;
+
+            const results = [];
+            let dt = new Date();
+            dt.setSeconds(0, 0);
+            dt = new Date(dt.getTime() + 60 * 1000); // 从下一分钟开始
+            let steps = 0;
+            // 最多向后扫描约两年的分钟数，避免月度/年度任务被过早截断
+            const MAX_STEPS = 2 * 365 * 24 * 60;
+
+            while (results.length < count && steps < MAX_STEPS) {
+                const minute = dt.getMinutes();
+                const hour = dt.getHours();
+                const dom = dt.getDate();
+                const month = dt.getMonth() + 1;
+                const dow = dt.getDay(); // 0=周日
+
+                const monthOk = !months || months.has(month);
+                const domOk = !doms || doms.has(dom);
+                const dowOk = !dows || dows.has(dow);
+
+                if (minutes.has(minute) && hours.has(hour) && monthOk && domOk && dowOk) {
+                    results.push(new Date(dt.getTime()));
+                }
+
+                dt = new Date(dt.getTime() + 60 * 1000);
+                steps++;
+            }
+
+            return results;
+        }
+
+        function updateCronPreview() {
+            const input = document.getElementById('backup-cron');
+            const preview = document.getElementById('backup-cron-preview');
+            if (!input || !preview) return;
+            const expr = input.value.trim();
+            if (!expr) {
+                preview.textContent = '未设置调度策略，将不会自动执行备份。';
+                return;
+            }
+            const runs = computeNextCronRuns(expr, 5);
+            if (!runs || !runs.length) {
+                preview.textContent = 'cron 表达式无效，请检查格式（例如 0 0 12 * * 表示每天 12:00 执行）。';
+                return;
+            }
+            const fmt = d => {
+                const pad = n => (n < 10 ? '0' + n : '' + n);
+                const y = d.getFullYear();
+                const m = pad(d.getMonth() + 1);
+                const day = pad(d.getDate());
+                const h = pad(d.getHours());
+                const mi = pad(d.getMinutes());
+                return `${y}-${m}-${day} ${h}:${mi}`;
+            };
+            preview.textContent = '最近 5 次预计运行时间：' + runs.map(fmt).join('， ');
+        }
+
         async function loadBackups() {
             const filter = document.getElementById('filter-db').value.trim();
             const url = filter ? '/db/backups?database=' + encodeURIComponent(filter) : '/db/backups';
@@ -769,11 +892,49 @@
                 toast('请填写主机、用户名、密码、数据库名', 'error');
                 return;
             }
+            const cronInput = document.getElementById('backup-cron');
+            const cronExpr = cronInput ? cronInput.value.trim() : '';
             const btn = document.getElementById('btn-backup');
             btn.disabled = true;
             btn.textContent = backupType === 'incremental' ? '增量备份中...' : '备份中...';
             try {
-                if (backupType === 'full') {
+                // 如果填写了调度策略，则不立即执行，而是写入定时任务配置
+                if (cronExpr) {
+                    if (backupType === 'incremental') {
+                        toast('暂不支持为增量备份配置调度策略，请选择全量备份或清空调度策略后再试。', 'error');
+                        return;
+                    }
+                    const planSelect = document.getElementById('backup-plan-select');
+                    const selectedPlanId = planSelect && planSelect.value ? planSelect.value.trim() : '';
+                    if (!selectedPlanId) {
+                        toast('请先在“选择数据库实例信息”中选择或保存一个实例，再配置调度策略。', 'error');
+                        return;
+                    }
+                    const cleanDays = parseInt(document.getElementById('backup-clean').value) || 0;
+                    const tables = document.getElementById('backup-tables').value.trim();
+                    const ignore = document.getElementById('backup-ignore').value.trim();
+                    const gzipCheckbox = document.getElementById('backup-gzip');
+                    const body = {
+                        schedule: cronExpr,
+                        backup_type: backupType,
+                        tables: tables || undefined,
+                        ignore_tables: ignore || undefined,
+                        clean_days: cleanDays,
+                        enable_gzip: !!(gzipCheckbox && gzipCheckbox.checked),
+                    };
+                    const r = await fetch('/backup-plans/' + encodeURIComponent(selectedPlanId) + '/jobs', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body)
+                    });
+                    const j = await r.json();
+                    if (j.code === 200) {
+                        toast('已保存定时任务，不会立即执行备份。');
+                        loadBackupPlans();
+                    } else {
+                        toast('保存定时任务失败: ' + (j.msg || ''), 'error');
+                    }
+                } else if (backupType === 'full') {
                     const body = {
                         host,
                         port: document.getElementById('backup-port').value || '3306',
@@ -837,48 +998,62 @@
             }
         }
 
-        // 保存当前“新建备份”表单中的连接信息与备份参数为一个备份计划
+        // 保存当前“数据备份”表单中的连接信息与备份参数为一个备份计划
         async function saveBackupPlan() {
             const host = document.getElementById('backup-host').value.trim();
             const user = document.getElementById('backup-user').value.trim();
             const password = document.getElementById('backup-password').value;
             const database = document.getElementById('backup-database').value.trim();
-            const name = prompt('请输入此数据库实例配置的名称（例如 mall-prod 或 mall-test）：', database || '');
-            if (!name) return;
             if (!host || !user || !database) {
-                toast('请先填写主机、用户名、数据库名，再保存连接信息', 'error');
+                toast('请先填写主机、用户名、数据库名，再保存实例信息', 'error');
                 return;
             }
             const clean = parseInt(document.getElementById('backup-clean').value) || 0;
             const gzipCheckbox = document.getElementById('backup-gzip');
+            const cronInput = document.getElementById('backup-cron');
             const tables = document.getElementById('backup-tables').value.trim();
             const ignore = document.getElementById('backup-ignore').value.trim();
+            const planSelect = document.getElementById('backup-plan-select');
+            const selectedPlanId = planSelect && planSelect.value ? planSelect.value.trim() : '';
+            const isUpdate = selectedPlanId.length > 0;
             const body = {
-                name,
+                name: null,
                 host,
                 port: document.getElementById('backup-port').value || '3306',
                 user,
-                password,
                 database,
                 backup_dir: '/data/backup/mysql',
                 tables: tables || '',
                 ignore_tables: ignore || '',
                 clean_days: clean,
                 enable_gzip: !!(gzipCheckbox && gzipCheckbox.checked),
+                schedule: cronInput ? (cronInput.value.trim() || null) : null,
                 mode: 'full_only'
             };
+            if (isUpdate) {
+                const plan = (window._backupPlansCache || []).find(p => p.id === selectedPlanId);
+                if (plan) body.name = plan.name || '';
+                if (password !== '') body.password = password;
+            } else {
+                const name = prompt('请输入此数据库实例配置的名称（例如 mall-prod 或 mall-test）：', database || '');
+                if (!name) return;
+                body.name = name;
+                body.password = password;
+            }
             const btn = document.getElementById('btn-save-plan');
             btn.disabled = true;
             btn.textContent = '保存中...';
             try {
-                const r = await fetch('/backup-plans', {
-                    method: 'POST',
+                const url = isUpdate ? ('/backup-plans/' + encodeURIComponent(selectedPlanId)) : '/backup-plans';
+                const method = isUpdate ? 'PUT' : 'POST';
+                const r = await fetch(url, {
+                    method,
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body)
                 });
                 const j = await r.json();
                 if (j.code === 200) {
-                    toast('保存连接信息成功');
+                    toast('保存实例信息成功');
                     loadBackupPlans();
                 } else {
                     toast('保存失败: ' + (j.msg || ''), 'error');
@@ -887,7 +1062,7 @@
                 toast('请求失败: ' + e.message, 'error');
             } finally {
                 btn.disabled = false;
-                btn.textContent = '保存连接信息';
+                btn.textContent = '保存实例信息';
             }
         }
 
@@ -906,10 +1081,8 @@
                     const tr = document.createElement('tr');
                     tr.innerHTML =
                         '<td class="col-name">' + esc(it.name || '') + '</td>' +
-                        '<td class="col-db">' + esc(it.database || '') + '</td>' +
                         '<td class="col-type">' + (it.backup_type === 'incremental' ? '增量' : '全量') + '</td>' +
                         '<td class="col-cron">' + esc(it.cron_expr || it.schedule || '') + '</td>' +
-                        '<td class="col-clean">' + esc(it.clean_days != null ? (it.clean_days + ' 天') : '') + '</td>' +
                         '<td class="col-last">' + esc(it.last_run_at || '-') + '</td>' +
                         '<td class="col-next">' + esc(it.next_run_at || '-') + '</td>' +
                         '<td class="col-status">' + (it.enabled === false ? '停用' : '启用') + '</td>' +
@@ -922,16 +1095,48 @@
             }
         }
 
+        window._backupPlansCache = [];
+
+        function fillBackupFormFromPlan(plan) {
+            if (!plan) return;
+            const hostEl = document.getElementById('backup-host');
+            const portEl = document.getElementById('backup-port');
+            const userEl = document.getElementById('backup-user');
+            const dbEl = document.getElementById('backup-database');
+            const tablesEl = document.getElementById('backup-tables');
+            const ignoreEl = document.getElementById('backup-ignore');
+            const cronEl = document.getElementById('backup-cron');
+            const cleanEl = document.getElementById('backup-clean');
+            const gzipEl = document.getElementById('backup-gzip');
+            if (hostEl) hostEl.value = plan.host || '';
+            if (portEl) portEl.value = plan.port != null ? plan.port : '3306';
+            if (userEl) userEl.value = plan.user || '';
+            if (dbEl) dbEl.value = plan.database || '';
+            if (tablesEl) tablesEl.value = plan.tables || '';
+            if (ignoreEl) ignoreEl.value = plan.ignore_tables || '';
+            if (cleanEl) cleanEl.value = plan.clean_days != null ? plan.clean_days : 0;
+            if (gzipEl) gzipEl.checked = !!plan.enable_gzip;
+            if (cronEl) {
+                cronEl.value = plan.schedule || plan.cron_expr || '';
+                updateCronPreview();
+            }
+        }
+
         async function loadBackupPlans() {
             const tbody = document.getElementById('plans-tbody');
             const empty = document.getElementById('plans-empty');
+            const planSelect = document.getElementById('backup-plan-select');
             if (!tbody || !empty) return;
             tbody.innerHTML = '';
             empty.style.display = 'none';
+            if (planSelect) {
+                planSelect.innerHTML = '<option value="">-- 请选择或手动填写下方信息 --</option>';
+            }
             try {
                 const r = await fetch('/backup-plans');
                 const j = await r.json();
                 const items = (j.code === 200 && j.data && (j.data.items || [])) || [];
+                window._backupPlansCache = items;
                 const esc = s => ('' + s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
                 items.forEach(it => {
                     const tr = document.createElement('tr');
@@ -945,6 +1150,14 @@
                         '<td><button class="btn btn-secondary btn-sm btn-plan-del" data-id="' + esc(it.id || '') + '">删除</button></td>';
                     tbody.appendChild(tr);
                 });
+                if (planSelect) {
+                    items.forEach(it => {
+                        const opt = document.createElement('option');
+                        opt.value = it.id || '';
+                        opt.textContent = (it.name || it.id || '未命名') + (it.database ? ' (' + it.database + ')' : '');
+                        planSelect.appendChild(opt);
+                    });
+                }
                 tbody.querySelectorAll('.btn-plan-del').forEach(btn => {
                     btn.onclick = () => {
                         const id = btn.dataset.id;
@@ -1177,6 +1390,21 @@
         document.getElementById('filter-db').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') loadBackups();
         });
+        const cronInput = document.getElementById('backup-cron');
+        if (cronInput) {
+            cronInput.addEventListener('input', updateCronPreview);
+            cronInput.addEventListener('blur', updateCronPreview);
+            updateCronPreview();
+        }
+        const backupPlanSelect = document.getElementById('backup-plan-select');
+        if (backupPlanSelect) {
+            backupPlanSelect.addEventListener('change', function() {
+                const id = this.value;
+                if (!id) return;
+                const plan = (window._backupPlansCache || []).find(p => p.id === id);
+                fillBackupFormFromPlan(plan);
+            });
+        }
         const restoreBackupSelect = document.getElementById('restore-backup-dir');
         if (restoreBackupSelect) {
             restoreBackupSelect.addEventListener('change', () => {
