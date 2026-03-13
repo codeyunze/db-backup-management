@@ -863,6 +863,41 @@
             }
         }
 
+        // 供执行备份 / 保存调度任务 / 保存实例信息前共用的连接校验
+        async function ensureBackupConnectionOK() {
+            const host = document.getElementById('backup-host').value.trim();
+            const user = document.getElementById('backup-user').value.trim();
+            const password = document.getElementById('backup-password').value;
+            const database = document.getElementById('backup-database').value.trim();
+            if (!host || !user || !database) {
+                toast('请填写主机、用户名、数据库名', 'error');
+                return false;
+            }
+            try {
+                const r = await fetch('/db/test-connection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        host,
+                        port: document.getElementById('backup-port').value || '3306',
+                        user,
+                        password,
+                        database
+                    })
+                });
+                const j = await r.json();
+                if (j.code === 200) {
+                    return true;
+                } else {
+                    toast(j.msg || '连接失败', 'error');
+                    return false;
+                }
+            } catch (e) {
+                toast('测试连接失败: ' + e.message, 'error');
+                return false;
+            }
+        }
+
         async function testConnectionRestore() {
             const host = document.getElementById('restore-host').value.trim();
             const user = document.getElementById('restore-user').value.trim();
@@ -897,6 +932,41 @@
             } finally {
                 btn.disabled = false;
                 btn.textContent = '测试连接';
+            }
+        }
+
+        // 供执行还原前共用的连接校验
+        async function ensureRestoreConnectionOK() {
+            const host = document.getElementById('restore-host').value.trim();
+            const user = document.getElementById('restore-user').value.trim();
+            const password = document.getElementById('restore-password').value;
+            const database = document.getElementById('restore-target-db').value.trim();
+            if (!host || !user || !database) {
+                toast('请填写主机、用户名和目标数据库名', 'error');
+                return false;
+            }
+            try {
+                const r = await fetch('/db/test-connection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        host,
+                        port: document.getElementById('restore-port').value || '3306',
+                        user,
+                        password,
+                        database
+                    })
+                });
+                const j = await r.json();
+                if (j.code === 200) {
+                    return true;
+                } else {
+                    toast(j.msg || '连接失败', 'error');
+                    return false;
+                }
+            } catch (e) {
+                toast('测试连接失败: ' + e.message, 'error');
+                return false;
             }
         }
 
