@@ -24,6 +24,7 @@ BACKUP_PLANS_FILE = os.environ.get(
     "BACKUP_PLANS_FILE", os.path.join(BACKUP_ROOT, "backup-plans.json")
 )
 JOB_LOGS_DIR = os.path.join(BACKUP_ROOT, "job-logs")
+JOB_SCRIPTS_DIR = os.path.join(BACKUP_ROOT, "jobs")
 CRON_MARK_PREFIX = "# db-backup-management job "
 
 # 备份目录命名格式：{数据库名}_YYYYMMDD_HHMMSS
@@ -219,8 +220,10 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
                 return
 
             os.makedirs(JOB_LOGS_DIR, exist_ok=True)
+            os.makedirs(JOB_SCRIPTS_DIR, exist_ok=True)
             cron_log_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.run.log")
             meta_log_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.log")
+            job_script_path = os.path.join(JOB_SCRIPTS_DIR, f"{job_id}.sh")
 
             # tables/ignore_tables/clean_days/enable_gzip 以 job 为准，缺省回退到 plan
             tables = (job.get("tables") or plan.get("tables") or "").strip()
@@ -232,36 +235,29 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
                 else plan.get("enable_gzip") or False
             )
 
-            # 构造备份脚本命令：
-            # - 显式设置 PATH，确保 cron 环境能找到 /usr/local/bin 下的 mysql/mysqldump
-            # - 密码作为普通参数传递给脚本，由脚本内部统一处理
-            parts = [
+            # 生成单独的 job 执行脚本 job-logs/job_<id>.sh
+            script_lines = [
+                "#!/bin/bash",
+                f'echo "$(date +\'%Y-%m-%d %H:%M:%S\') 调度触发备份 job={job_id} plan={plan_id}" >> "{meta_log_path}"',
                 'PATH="/usr/local/bin:/usr/bin:/bin:$PATH"',
-                "/scripts/mysql-backup-schema-data.sh",
-                f"-H {host}",
-                f"-P {port}",
-                f"-u {user}",
-                f'-p "{password}"',
-                f"-d {database}",
+                "/scripts/mysql-backup-schema-data.sh "
+                + f"-H {host} -P {port} -u {user} -p \"{password}\" -d {database} "
+                + (f"--tables '{tables}' " if tables else "")
+                + (f"--ignore-tables '{ignore_tables}' " if ignore_tables else "")
+                + (f"--clean-days {clean_days} " if clean_days else "")
+                + ("--gzip " if enable_gzip else "")
+                + f'>> "{cron_log_path}" 2>&1',
+                "",
             ]
-            if tables:
-                parts.append(f"--tables '{tables}'")
-            if ignore_tables:
-                parts.append(f"--ignore-tables '{ignore_tables}'")
-            if clean_days:
-                parts.append(f"--clean-days {clean_days}")
-            if enable_gzip:
-                parts.append("--gzip")
-
-            # 每次执行前先在 job_xxx.log 里记录一条调度触发日志，再执行备份脚本并将输出写入 job_xxx.run.log
-            cmd = (
-                f'echo "$(date +\'%Y-%m-%d %H:%M:%S\') 调度触发备份 job={job_id} plan={plan_id}" >> "{meta_log_path}" && '
-                + " ".join(parts)
-                + f' >> "{cron_log_path}" 2>&1'
-            )
+            try:
+                with open(job_script_path, "w", encoding="utf-8") as sf:
+                    sf.write("\n".join(script_lines))
+                os.chmod(job_script_path, 0o755)
+            except Exception:
+                return
 
             new_lines.append(f"{CRON_MARK_PREFIX}{job_id} plan={plan_id}")
-            new_lines.append(f"{schedule} {cmd}")
+            new_lines.append(f"{schedule} sh \"{job_script_path}\"")
 
         _write_crontab_lines(new_lines)
     except Exception:
