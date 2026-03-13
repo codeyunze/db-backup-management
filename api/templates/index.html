@@ -221,7 +221,6 @@
         }
         #plans-table th,
         #plans-table td {
-            width: 14.28%;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -331,7 +330,7 @@
                             <th>端口</th>
                             <th>数据库</th>
                             <th>用户名</th>
-                            <th>操作</th>
+                            <th class="col-actions">操作</th>
                         </tr>
                     </thead>
                     <tbody id="plans-tbody"></tbody>
@@ -1554,6 +1553,7 @@
             const hostEl = document.getElementById('backup-host');
             const portEl = document.getElementById('backup-port');
             const userEl = document.getElementById('backup-user');
+            const passEl = document.getElementById('backup-password');
             const dbEl = document.getElementById('backup-database');
             const tablesEl = document.getElementById('backup-tables');
             const ignoreEl = document.getElementById('backup-ignore');
@@ -1564,6 +1564,7 @@
             if (hostEl) hostEl.value = plan.host || '';
             if (portEl) portEl.value = plan.port != null ? plan.port : '3306';
             if (userEl) userEl.value = plan.user || '';
+            if (passEl) passEl.value = plan.password || '';
             if (dbEl) dbEl.value = plan.database || '';
             if (tablesEl) tablesEl.value = plan.tables || '';
             if (ignoreEl) ignoreEl.value = plan.ignore_tables || '';
