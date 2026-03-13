@@ -497,7 +497,7 @@
             <div class="card-header collapsible-header">
                 <span>定时任务列表</span>
                 <span>
-                    <button class="btn btn-secondary" onclick="loadScheduledTasks()">刷新</button>
+                    <button class="btn btn-secondary btn-sm" onclick="loadScheduledTasks()">刷新</button>
                 </span>
             </div>
             <div class="card-body">
@@ -525,7 +525,7 @@
                 <span>备份列表</span>
                 <span>
                     <input type="text" id="filter-db" placeholder="按数据库名筛选" style="padding:6px 10px;margin-left:12px;width:140px;">
-                    <button class="btn btn-secondary" onclick="loadBackups()" style="margin-left:8px;">刷新</button>
+                    <button class="btn btn-secondary btn-sm" onclick="loadBackups()" style="margin-left:8px;">刷新</button>
                 </span>
             </div>
             <div class="card-body">
@@ -1235,7 +1235,10 @@
                         '<td>' + esc(it.database || '') + '</td>' +
                         '<td>' + esc(it.user || '') + '</td>' +
                         '<td>' + (it.enable_gzip ? '是' : '否') + '</td>' +
-                        '<td><button class="btn btn-secondary btn-sm btn-plan-del" data-id="' + esc(it.id || '') + '">删除</button></td>';
+                        '<td>' +
+                            '<button class="btn btn-secondary btn-sm btn-plan-edit" data-id="' + esc(it.id || '') + '">编辑</button> ' +
+                            '<button class="btn btn-danger btn-sm btn-plan-del" data-id="' + esc(it.id || '') + '">删除</button>' +
+                        '</td>';
                     tbody.appendChild(tr);
                 });
                 if (planSelect) {
@@ -1246,11 +1249,36 @@
                         planSelect.appendChild(opt);
                     });
                 }
+                tbody.querySelectorAll('.btn-plan-edit').forEach(btn => {
+                    btn.onclick = () => {
+                        const id = btn.dataset.id;
+                        if (!id) return;
+                        const plan = (window._backupPlansCache || []).find(p => p.id === id);
+                        if (!plan) {
+                            toast('未找到对应的数据库实例信息', 'error');
+                            return;
+                        }
+                        // 选中下拉并填充“数据备份”表单，方便用户编辑后点击“保存实例信息”
+                        const planSelect = document.getElementById('backup-plan-select');
+                        if (planSelect) {
+                            planSelect.value = id;
+                        }
+                        fillBackupFormFromPlan(plan);
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                        toast('已加载实例信息，请在上方“数据备份”表单中修改后点击“保存实例信息”。');
+                    };
+                });
                 tbody.querySelectorAll('.btn-plan-del').forEach(btn => {
                     btn.onclick = () => {
                         const id = btn.dataset.id;
                         if (!id) return;
-                        if (!confirm('确定要删除该数据库实例信息吗？')) return;
+                        const plan = (window._backupPlansCache || []).find(p => p.id === id);
+                        const jobs = (plan && Array.isArray(plan.jobs)) ? plan.jobs : [];
+                        let msg = '确定要删除该数据库实例信息吗？';
+                        if (jobs.length > 0) {
+                            msg = '该实例信息下存在 ' + jobs.length + ' 条定时任务。\n如果继续删除，将同时删除这些定时任务，并从系统 crontab 中移除对应计划。\n\n是否继续删除？';
+                        }
+                        if (!confirm(msg)) return;
                         deleteBackupPlan(id);
                     };
                 });

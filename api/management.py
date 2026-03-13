@@ -23,6 +23,8 @@ BACKUP_ROOT = os.environ.get("BACKUP_ROOT", "/data/backup/mysql")
 BACKUP_PLANS_FILE = os.environ.get(
     "BACKUP_PLANS_FILE", os.path.join(BACKUP_ROOT, "backup-plans.json")
 )
+JOB_LOGS_DIR = os.path.join(BACKUP_ROOT, "job-logs")
+CRON_MARK_PREFIX = "# db-backup-management job "
 
 # 备份目录命名格式：{数据库名}_YYYYMMDD_HHMMSS
 BACKUP_DIR_PATTERN = re.compile(r"^(.+)_(\d{8})_(\d{6})$")
@@ -108,6 +110,114 @@ def _generate_job_id():
     import time
 
     return f"job_{int(time.time() * 1000)}"
+
+
+def _append_job_log(job_id: str, message: str) -> None:
+    """
+    将一条定时任务运行日志追加写入到 job-logs/<job_id>.log 中。
+    """
+    try:
+        os.makedirs(JOB_LOGS_DIR, exist_ok=True)
+        log_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.log")
+        import time as _time
+
+        ts = _time.strftime("%Y-%m-%d %H:%M:%S", _time.localtime())
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] {message}\n")
+    except Exception:
+        # 日志记录失败不影响主流程
+        return
+
+
+def _read_crontab_lines() -> list[str]:
+    """
+    读取当前用户 crontab（按行返回）。若不存在 crontab，则返回空列表。
+    """
+    try:
+        result = subprocess.run(
+            ["crontab", "-l"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=os.environ,
+        )
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+        if result.returncode != 0:
+            # 没有 crontab 的典型输出
+            if "no crontab" in stderr.lower() or "no crontab" in stdout.lower():
+                return []
+            return []
+        return stdout.splitlines()
+    except subprocess.TimeoutExpired:
+        return []
+    except Exception:
+        return []
+
+
+def _write_crontab_lines(lines: list[str]) -> None:
+    """
+    覆盖写入 crontab 内容。
+    """
+    try:
+        text = "\n".join(lines).rstrip() + "\n" if lines else ""
+        subprocess.run(
+            ["crontab", "-"],
+            input=text,
+            text=True,
+            timeout=10,
+            env=os.environ,
+        )
+    except Exception:
+        # 写 crontab 失败不影响主流程，但会导致系统级定时任务不同步
+        return
+
+
+def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> None:
+    """
+    根据 job 的 enabled / schedule，在系统 crontab 中添加或移除对应的条目。
+    - 每个 job 使用一行标记注释 + 一行实际 cron 命令；
+    - 标记行格式:  "# db-backup-management job <job_id> plan=<plan_id>"
+    - 命令行目前仅写一条 echo 到对应 job 的 cron 日志文件，用于验证调度是否生效。
+    """
+    try:
+        job_id = job.get("id")
+        if not job_id:
+            return
+        schedule = (job.get("schedule") or "").strip()
+        enabled = bool(job.get("enabled", True))
+
+        lines = _read_crontab_lines()
+        new_lines: list[str] = []
+        skip_next = False
+        marker_sub = f"{CRON_MARK_PREFIX}{job_id}"
+
+        for line in lines:
+            if skip_next:
+                # 跳过标记后的下一行（实际 cron 命令）
+                skip_next = False
+                continue
+            if line.strip().startswith(CRON_MARK_PREFIX) and job_id in line:
+                # 找到该 job 的标记行，跳过它和下一行
+                skip_next = True
+                continue
+            new_lines.append(line)
+
+        # 仅在 enabled 且非 remove_only 时重新添加
+        if not remove_only and enabled and schedule:
+            os.makedirs(JOB_LOGS_DIR, exist_ok=True)
+            cron_log_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.cron.log")
+            # 使用简单 echo 命令，将触发情况写入一个独立 cron 日志文件，后续可扩展为真正执行备份脚本
+            cmd = (
+                f'echo "cron fired for job {job_id} (plan {plan_id})" '
+                f'>> "{cron_log_path}"'
+            )
+            new_lines.append(f"{CRON_MARK_PREFIX}{job_id} plan={plan_id}")
+            new_lines.append(f"{schedule} {cmd}")
+
+        _write_crontab_lines(new_lines)
+    except Exception:
+        return
 
 
 @app.route("/backup-plans", methods=["GET"])
@@ -333,10 +443,11 @@ def create_backup_job(plan_id):
                         else p.get("enable_gzip") or False
                     ),
                     # 初始默认为运行状态，可在前端切换运行/停止
+                    # 新建任务默认处于“停止”状态，由用户在前端点击“运行”后再写入 crontab
                     "enabled": bool(
                         data.get("enabled")
                         if data.get("enabled") is not None
-                        else True
+                        else False
                     ),
                     "created_at": time.strftime(
                         "%Y-%m-%d %H:%M:%S", time.localtime()
@@ -344,6 +455,10 @@ def create_backup_job(plan_id):
                 }
                 jobs.append(job)
                 p["jobs"] = jobs
+                _append_job_log(
+                    job_id,
+                    f"创建定时任务: plan_id={plan_id}, name={job['name']!r}, schedule={schedule!r}, backup_type={backup_type}",
+                )
                 break
         if not found:
             return (
@@ -524,6 +639,9 @@ def update_backup_job(plan_id, job_id):
                 if j.get("id") != job_id:
                     continue
                 found = True
+                old_enabled = bool(j.get("enabled", True))
+                old_schedule = j.get("schedule") or ""
+                old_name = j.get("name") or ""
                 for key in [
                     "name",
                     "schedule",
@@ -544,6 +662,22 @@ def update_backup_job(plan_id, job_id):
                             j[key] = bool(data[key])
                         else:
                             j[key] = data[key]
+                new_enabled = bool(j.get("enabled", True))
+                new_schedule = j.get("schedule") or ""
+                new_name = j.get("name") or ""
+                # 记录状态/计划变更日志
+                if new_enabled != old_enabled:
+                    _append_job_log(
+                        job_id,
+                        f"更新定时任务状态: plan_id={plan_id}, name={new_name!r}, enabled={new_enabled}",
+                    )
+                if new_schedule != old_schedule:
+                    _append_job_log(
+                        job_id,
+                        f"更新定时任务调度: plan_id={plan_id}, name={new_name!r}, schedule={new_schedule!r}",
+                    )
+                # 同步系统 crontab
+                _sync_job_crontab(plan_id, j)
                 break
             p["jobs"] = jobs
             if found:
@@ -580,6 +714,8 @@ def delete_backup_job(plan_id, job_id):
                 if j.get("id") == job_id:
                     found = True
                     enabled = bool(j.get("enabled", True))
+                    # 删除前，确保从 crontab 中移除对应条目
+                    _sync_job_crontab(plan_id, j, remove_only=True)
                     # 不立即删除，先根据状态判断
                     continue
                 new_jobs.append(j)
@@ -596,6 +732,7 @@ def delete_backup_job(plan_id, job_id):
                         400,
                     )
                 p["jobs"] = new_jobs
+                _append_job_log(job_id, f"删除定时任务: plan_id={plan_id}")
                 break
         if not found:
             return (
