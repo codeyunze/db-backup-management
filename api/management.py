@@ -417,11 +417,32 @@ def delete_backup_plan(plan_id):
     """
     try:
         plans = _load_backup_plans()
-        new_plans = [p for p in plans if p.get("id") != plan_id]
-        if len(new_plans) == len(plans):
+        new_plans = []
+        found = False
+        has_jobs = False
+        for p in plans:
+            if p.get("id") == plan_id:
+                found = True
+                jobs = p.get("jobs") or []
+                if isinstance(jobs, list) and jobs:
+                    has_jobs = True
+                continue
+            new_plans.append(p)
+        if not found:
             return (
                 jsonify({"code": 404, "msg": "未找到指定备份计划", "data": None}),
                 404,
+            )
+        if has_jobs:
+            return (
+                jsonify(
+                    {
+                        "code": 400,
+                        "msg": "该实例下仍存在定时任务，请先在“定时任务列表”中清理完定时任务后再删除实例信息。",
+                        "data": None,
+                    }
+                ),
+                400,
             )
         _save_backup_plans(new_plans)
         return jsonify({"code": 200, "msg": "删除成功", "data": None}), 200
