@@ -220,6 +220,7 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
 
             os.makedirs(JOB_LOGS_DIR, exist_ok=True)
             cron_log_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.run.log")
+            meta_log_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.log")
 
             # tables/ignore_tables/clean_days/enable_gzip 以 job 为准，缺省回退到 plan
             tables = (job.get("tables") or plan.get("tables") or "").strip()
@@ -255,7 +256,12 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
             if enable_gzip:
                 parts.append("--gzip")
 
-            cmd = " ".join(parts) + f' >> "{cron_log_path}" 2>&1'
+            # 每次执行前先在 job_xxx.log 里记录一条调度触发日志，再执行备份脚本并将输出写入 job_xxx.run.log
+            cmd = (
+                f'echo "$(date +\'%Y-%m-%d %H:%M:%S\') 调度触发备份 job={job_id} plan={plan_id}" >> "{meta_log_path}" && '
+                + " ".join(parts)
+                + f' >> "{cron_log_path}" 2>&1'
+            )
 
             new_lines.append(f"{CRON_MARK_PREFIX}{job_id} plan={plan_id}")
             new_lines.append(f"{schedule} {cmd}")
@@ -793,15 +799,31 @@ def delete_backup_job(plan_id, job_id):
 @app.route("/scheduled-tasks/<job_id>/log", methods=["GET"])
 def get_scheduled_task_log(job_id):
     """
-    读取指定定时任务的运行日志（job-logs/<job_id>.run.log）。
+    读取指定定时任务的日志：
+    - 元日志: job-logs/<job_id>.log（创建/更新/删除/触发记录）
+    - 运行日志: job-logs/<job_id>.run.log（备份脚本标准输出/错误）
     """
     try:
         os.makedirs(JOB_LOGS_DIR, exist_ok=True)
-        log_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.run.log")
-        if not os.path.isfile(log_path):
-            return jsonify({"code": 200, "msg": "ok", "data": {"content": "(暂无日志)"}}), 200
-        with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
+        meta_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.log")
+        run_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.run.log")
+        meta = ""
+        run = ""
+        if os.path.isfile(meta_path):
+            with open(meta_path, "r", encoding="utf-8", errors="ignore") as f:
+                meta = f.read()
+        if os.path.isfile(run_path):
+            with open(run_path, "r", encoding="utf-8", errors="ignore") as f:
+                run = f.read()
+        if not meta and not run:
+            content = "(暂无日志)"
+        else:
+            parts = []
+            if meta:
+                parts.append("==== 元日志 (job.log) ====\n" + meta.rstrip())
+            if run:
+                parts.append("==== 运行日志 (job.run.log) ====\n" + run.rstrip())
+            content = "\n\n".join(parts)
         return jsonify({"code": 200, "msg": "ok", "data": {"content": content}}), 200
     except Exception as e:
         return jsonify({"code": 500, "msg": str(e), "data": {"content": str(e)}}), 500
