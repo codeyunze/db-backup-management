@@ -54,4 +54,4 @@ EXPOSE 8081
 
 VOLUME ["/scripts", "/data/backup/mysql"]
 
-CMD ["python3", "management.py"]
+CMD ["bash", "-c", "cron && python3 management.py"]
