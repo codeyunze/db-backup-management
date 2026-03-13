@@ -331,7 +331,6 @@
                             <th>端口</th>
                             <th>数据库</th>
                             <th>用户名</th>
-                            <th>gzip压缩</th>
                             <th>操作</th>
                         </tr>
                     </thead>
@@ -1603,7 +1602,6 @@
                         '<td>' + esc(it.port || '') + '</td>' +
                         '<td>' + esc(it.database || '') + '</td>' +
                         '<td>' + esc(it.user || '') + '</td>' +
-                        '<td>' + (it.enable_gzip ? '是' : '否') + '</td>' +
                         '<td>' +
                             '<button class="btn btn-secondary btn-sm btn-plan-edit" data-id="' + esc(it.id || '') + '">编辑</button> ' +
                             '<button class="btn btn-secondary btn-sm btn-plan-test" data-id="' + esc(it.id || '') + '">测试连接</button> ' +

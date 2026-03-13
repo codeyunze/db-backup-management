@@ -276,17 +276,6 @@ def list_backup_plans():
         q = dict(p)
         if "password" in q:
             q["password"] = None
-        # 为前端展示方便，聚合 jobs 中的部分信息（如是否有启用 gzip 的任务）
-        jobs = p.get("jobs") or []
-        if isinstance(jobs, list):
-            any_gzip = any(
-                isinstance(j, dict) and j.get("enable_gzip")
-                for j in jobs
-            )
-        else:
-            any_gzip = False
-        # 提供一个只读的 enable_gzip 视图字段（不再在 plan 层持久化该字段）
-        q.setdefault("enable_gzip", any_gzip)
         safe_plans.append(q)
     return jsonify({"code": 200, "msg": "ok", "data": {"items": safe_plans}}), 200
 
