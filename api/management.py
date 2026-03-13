@@ -317,6 +317,9 @@ def create_backup_job(plan_id):
 
                 job = {
                     "id": job_id,
+                    "name": (data.get("name") or "").strip()
+                    if isinstance(data.get("name"), str)
+                    else "",
                     "schedule": schedule,
                     "backup_type": backup_type,
                     "tables": data.get("tables") or p.get("tables") or "",
@@ -445,12 +448,48 @@ def _parse_crontab_l():
 @app.route("/scheduled-tasks", methods=["GET"])
 def list_scheduled_tasks():
     """
-    定时任务列表。通过 crontab -l 获取当前用户的所有定时任务并解析展示。
-    展示字段：任务名称、数据库、备份类型、执行周期、清理策略、
-    上次执行时间、下次执行时间、状态、操作。不含 gzip、主机/端口。
+    定时任务列表。
+
+    当前版本：优先展示 backup-plans.json 中各实例下配置的 jobs，
+    每个 job 表示一条“备份调度记录”，不直接从 crontab 解析。
     """
     try:
-        items = _parse_crontab_l()
+        plans = _load_backup_plans()
+        items = []
+        for p in plans:
+            plan_id = p.get("id")
+            plan_name = p.get("name") or ""
+            database = p.get("database") or ""
+            jobs = p.get("jobs") or []
+            if not isinstance(jobs, list):
+                continue
+            for job in jobs:
+                j = dict(job or {})
+                j_id = j.get("id") or ""
+                schedule = j.get("schedule") or ""
+                backup_type = j.get("backup_type") or "full"
+                job_name = j.get("name") or ""
+                clean_days = j.get("clean_days")
+                enable_gzip = j.get("enable_gzip")
+                created_at = j.get("created_at") or "-"
+                items.append(
+                    {
+                        "id": j_id,
+                        "name": job_name or plan_name,
+                        "plan_id": plan_id,
+                        "plan_name": plan_name,
+                        "database": database,
+                        "backup_type": backup_type,
+                        "cron_expr": schedule,
+                        "schedule": schedule,
+                        "clean_days": clean_days,
+                        "enable_gzip": enable_gzip,
+                        "created_at": created_at,
+                        "last_run_at": "-",
+                        "next_run_at": "-",
+                        "enabled": True,
+                    }
+                )
         return jsonify({"code": 200, "msg": "ok", "data": {"items": items}}), 200
     except Exception as e:
         return jsonify({"code": 500, "msg": str(e), "data": {"items": []}}), 500

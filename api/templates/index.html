@@ -351,6 +351,7 @@
                                     </select>
                                 </div>
                             </div>
+                            <p style="color:#8c959f;font-size:0.8rem;margin:4px 0 0 0;">提示：增量备份会从所选全量备份文件中自动读取起始 binlog 位点。</p>
                             <p style="color:#8c959f;font-size:0.8rem;margin:4px 0 0 0;">起始位点：若该全量下已有增量，则从<strong>最后一个增量的结束位点</strong>开始，否则从全量 <code>meta/tables-binlog.json</code> 读取。</p>
                             <p style="color:#8c959f;font-size:0.8rem;margin:4px 0 0 0;">表过滤条件与全量备份一致，由所选全量备份的 <code>meta/backup-options.json</code> 决定，不可自定义。</p>
                         </div>
@@ -402,7 +403,13 @@
                 </div>
                 <div class="form-row">
                     <div class="form-group" style="flex:2;">
-                        <label>调度策略（cron 表达式）</label>
+                        <label>调度任务名称（可选）</label>
+                        <input type="text" id="backup-cron-name" placeholder="例如 每天中午全量备份 mall">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:2;">
+                        <label>调度策略（cron 表达式）（可选）</label>
                         <input type="text" id="backup-cron" placeholder="如 0 * * * * 表示每小时整点执行">
                         <small id="backup-cron-preview" style="display:block;margin-top:4px;font-size:0.8rem;color:#8c959f;"></small>
                     </div>
@@ -414,9 +421,6 @@
                         <button class="btn btn-secondary" id="btn-save-plan" onclick="saveBackupPlan()">保存实例信息</button>
                     </div>
                 </div>
-                <p style="color:#8c959f;font-size:0.8rem;margin-top:4px;">
-                    提示：增量备份会从所选全量备份的 meta 中自动读取起始 binlog 位点，无需手动填写。
-                </p>
             </div>
         </div>
 
@@ -893,6 +897,7 @@
                 return;
             }
             const cronInput = document.getElementById('backup-cron');
+            const cronNameInput = document.getElementById('backup-cron-name');
             const cronExpr = cronInput ? cronInput.value.trim() : '';
             const btn = document.getElementById('btn-backup');
             btn.disabled = true;
@@ -917,6 +922,7 @@
                     const body = {
                         schedule: cronExpr,
                         backup_type: backupType,
+                        name: cronNameInput ? (cronNameInput.value.trim() || null) : null,
                         tables: tables || undefined,
                         ignore_tables: ignore || undefined,
                         clean_days: cleanDays,
