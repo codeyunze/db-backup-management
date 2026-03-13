@@ -267,7 +267,7 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
 @app.route("/backup-plans", methods=["GET"])
 def list_backup_plans():
     """
-    列出所有备份计划（仅持久化配置，不负责执行）。
+    列出所有备份计划（数据库实例信息 + 其下的定时任务）。
     """
     plans = _load_backup_plans()
     # 为安全起见，默认不回显密码字段
@@ -276,6 +276,17 @@ def list_backup_plans():
         q = dict(p)
         if "password" in q:
             q["password"] = None
+        # 为前端展示方便，聚合 jobs 中的部分信息（如是否有启用 gzip 的任务）
+        jobs = p.get("jobs") or []
+        if isinstance(jobs, list):
+            any_gzip = any(
+                isinstance(j, dict) and j.get("enable_gzip")
+                for j in jobs
+            )
+        else:
+            any_gzip = False
+        # 提供一个只读的 enable_gzip 视图字段（不再在 plan 层持久化该字段）
+        q.setdefault("enable_gzip", any_gzip)
         safe_plans.append(q)
     return jsonify({"code": 200, "msg": "ok", "data": {"items": safe_plans}}), 200
 
@@ -283,12 +294,12 @@ def list_backup_plans():
 @app.route("/backup-plans", methods=["POST"])
 def create_backup_plan():
     """
-    创建一个新的备份计划。
+    创建一个新的备份计划（数据库实例信息，仅记录连接配置）。
     请求体 JSON 建议字段：
-    - name: 计划名称（必填，唯一或业务上区分）
+    - name: 实例名称（必填，唯一或业务上区分）
     - host, port, user, password, database: 数据库连接信息（必填）
     - backup_dir: 备份根目录（可选，默认 BACKUP_ROOT）
-    - tables, ignore_tables, clean_days, enable_gzip, mode 等（可选）
+    具体的备份策略参数（tables/clean_days/enable_gzip 等）下沉到 jobs 中记录。
     """
     try:
         data = request.get_json() or {}
@@ -323,6 +334,7 @@ def create_backup_plan():
                     400,
                 )
         plan_id = _generate_plan_id()
+        # 简化后的实例信息仅保留连接相关字段和 jobs 列表
         plan = {
             "id": plan_id,
             "name": name,
@@ -332,15 +344,6 @@ def create_backup_plan():
             "password": password,
             "database": database,
             "backup_dir": data.get("backup_dir") or BACKUP_ROOT,
-            "tables": data.get("tables") or "",
-            "ignore_tables": data.get("ignore_tables") or "",
-            "clean_days": int(data.get("clean_days") or 0),
-            "enable_gzip": bool(data.get("enable_gzip") or False),
-            "schedule": (data.get("schedule") or data.get("cron_expr") or "").strip()
-            if isinstance(data.get("schedule") or data.get("cron_expr") or "", str)
-            else "",
-            # 备份模式占位：full_only / incremental_only / smart_full_and_incremental
-            "mode": data.get("mode") or "full_only",
             # 针对该连接配置下的定时任务列表
             "jobs": [],
         }
@@ -368,7 +371,7 @@ def update_backup_plan(plan_id):
         for p in plans:
             if p.get("id") == plan_id:
                 found = True
-                # 可更新字段
+                # 可更新字段（仅连接/实例信息）
                 for key in [
                     "name",
                     "host",
@@ -376,12 +379,6 @@ def update_backup_plan(plan_id):
                     "user",
                     "database",
                     "backup_dir",
-                    "tables",
-                    "ignore_tables",
-                    "clean_days",
-                    "enable_gzip",
-                    "schedule",
-                    "mode",
                 ]:
                     if key in data and data[key] is not None:
                         if key in ("port", "clean_days"):
