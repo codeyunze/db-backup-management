@@ -263,6 +263,105 @@ def delete_backup_plan(plan_id):
         return jsonify({"code": 500, "msg": str(e), "data": None}), 500
 
 
+def _parse_crontab_l():
+    """
+    执行 crontab -l 并解析为任务列表。
+    返回 list[dict]，每项含: name, database, backup_type, schedule, clean_days, last_run_at, next_run_at, enabled, raw_command。
+    """
+    try:
+        result = subprocess.run(
+            ["crontab", "-l"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=os.environ,
+        )
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+        # 无 crontab 时 exit code 为 1，且常有 "no crontab for ..."
+        if result.returncode != 0:
+            if "no crontab" in stderr.lower() or "no crontab" in stdout.lower():
+                return []
+            return []
+        lines = stdout.split("\n")
+        items = []
+        last_comment = ""
+        for line in lines:
+            raw = line
+            line = line.strip()
+            if not line:
+                last_comment = ""
+                continue
+            if line.startswith("#"):
+                last_comment = line.lstrip("#").strip()
+                continue
+            # 有效 cron 行：前 5 段为 分 时 日 月 周，其余为命令
+            parts = line.split()
+            if len(parts) < 6:
+                continue
+            schedule = " ".join(parts[0:5])
+            command = " ".join(parts[5:])
+            name = last_comment if last_comment else (command[:80] + ("..." if len(command) > 80 else ""))
+            last_comment = ""
+            # 根据命令推断备份类型、数据库（本项目的脚本特征）；前端用 incremental/full 区分显示
+            backup_type = "incremental" if "incremental" in command or "backup-incremental" in command else "full"
+            database = ""
+            for opt in ["--database", "-d", "database="]:
+                if opt in command:
+                    try:
+                        if "=" in opt:
+                            i = command.find(opt) + len(opt)
+                            rest = command[i:]
+                            end = rest.find(" ") if " " in rest else len(rest)
+                            database = rest[:end].strip("'\"").strip()
+                        else:
+                            idx = command.find(opt)
+                            after = command[idx + len(opt):].strip()
+                            if after.startswith("="):
+                                after = after[1:].strip()
+                            database = (after.split() or [""])[0].strip("'\"")
+                        if database:
+                            break
+                    except Exception:
+                        pass
+            if not database and ("mysql-backup" in command or "mall_" in command):
+                m = re.search(r"mall[_\-]?\w*|([a-zA-Z0-9_]+)_\d{8}_", command)
+                if m:
+                    database = (m.group(0) or m.group(1) or "").strip("_")
+            items.append({
+                "id": f"cron_{len(items)}",
+                "name": name,
+                "database": database or "-",
+                "backup_type": backup_type,
+                "cron_expr": schedule,
+                "schedule": schedule,
+                "clean_days": None,
+                "last_run_at": "-",
+                "next_run_at": "-",
+                "enabled": True,
+                "raw_command": command,
+            })
+        return items
+    except subprocess.TimeoutExpired:
+        return []
+    except Exception:
+        return []
+
+
+@app.route("/scheduled-tasks", methods=["GET"])
+def list_scheduled_tasks():
+    """
+    定时任务列表。通过 crontab -l 获取当前用户的所有定时任务并解析展示。
+    展示字段：任务名称、数据库、备份类型、执行周期、清理策略、
+    上次执行时间、下次执行时间、状态、操作。不含 gzip、主机/端口。
+    """
+    try:
+        items = _parse_crontab_l()
+        return jsonify({"code": 200, "msg": "ok", "data": {"items": items}}), 200
+    except Exception as e:
+        return jsonify({"code": 500, "msg": str(e), "data": {"items": []}}), 500
+
+
 @app.route("/db/test-connection", methods=["POST"])
 def test_connection():
     """
