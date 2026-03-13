@@ -517,12 +517,13 @@
             </div>
         </div>
 
-        <!-- 定时任务列表 -->
+        <!-- 任务调度 -->
         <div class="card">
             <div class="card-header collapsible-header">
-                <span>定时任务列表</span>
+                <span>任务调度</span>
                 <span>
                     <button class="btn btn-secondary btn-sm" onclick="loadScheduledTasks()">刷新</button>
+                    <button class="btn btn-primary btn-sm" onclick="openJobModal(null)">新增</button>
                 </span>
             </div>
             <div class="card-body">
@@ -652,6 +653,73 @@
                 </div>
                 <div class="modal-body">
                     <div id="incr-content" style="font-family:monospace;font-size:0.85rem;"></div>
+                </div>
+            </div>
+        </div>
+        <!-- 任务调度新增/编辑弹窗 -->
+        <div id="job-modal" class="modal-overlay" style="display:none;">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3 id="job-modal-title">新增调度任务</h3>
+                    <button class="btn btn-secondary btn-sm" onclick="closeJobModal()">关闭</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-row">
+                        <div class="form-group" style="flex:2;">
+                            <label>数据库实例信息 *</label>
+                            <select id="job-plan-select">
+                                <option value="">-- 请选择数据库实例 --</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>备份类型 *</label>
+                            <select id="job-backup-type">
+                                <option value="full">全量备份</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="flex:2;">
+                            <label>调度任务名称 *</label>
+                            <input type="text" id="job-name" placeholder="例如 每天凌晨 1 点全量备份 mall">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="flex:2;">
+                            <label>调度策略（cron 表达式） *</label>
+                            <input type="text" id="job-cron" placeholder="如 0 1 * * * 表示每天 1 点执行">
+                            <small id="job-cron-preview" style="display:block;margin-top:4px;font-size:0.8rem;color:#8c959f;"></small>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="flex:2;">
+                            <label>仅备份指定表</label>
+                            <input type="text" id="job-tables" placeholder="如 user,order 多个表用逗号分隔，留空=全部">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="flex:2;">
+                            <label>不备份的表</label>
+                            <input type="text" id="job-ignore" placeholder="如 order_log 多个表用逗号分隔，留空=无">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="min-width: 80px; max-width: 180px;">
+                            <label>清理旧备份（天）（0=不清理）</label>
+                            <input type="number" id="job-clean" value="0" min="0" placeholder="0=不清理">
+                        </div>
+                        <div class="form-group" style="display:flex;align-items:flex-end;gap:6px;">
+                            <label style="margin-bottom:0;">
+                                <input type="checkbox" id="job-gzip">
+                                启用 gzip 压缩
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group actions">
+                            <button class="btn btn-secondary btn-sm" onclick="submitJobModal()">保存</button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1229,10 +1297,10 @@
                     const nextRuns = enabled && it.cron_expr ? computeNextCronRuns(it.cron_expr, 1) : null;
                     const nextText = nextRuns && nextRuns.length ? (function(d){ const pad=n=>n<10?'0'+n:''+n; return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes()); })(nextRuns[0]) : '-';
                     const statusText = enabled ? '运行' : '停止';
-                    const runBtn = enabled ? '' : '<button class="btn btn-secondary btn-sm btn-job-run" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">运行</button> ';
+                    const runBtn = !enabled ? '<button class="btn btn-secondary btn-sm btn-job-run" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">运行</button> ' : '';
                     const stopBtn = enabled ? '<button class="btn btn-secondary btn-sm btn-job-stop" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">停止</button> ' : '';
-                    const delBtn = enabled ? '' : '<button class="btn btn-danger btn-sm btn-job-del" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">删除</button>';
-                    const editBtn = enabled ? '' : '<button class="btn btn-secondary btn-sm btn-job-edit" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">编辑</button> ';
+                    const delBtn = !enabled ? '<button class="btn btn-danger btn-sm btn-job-del" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">删除</button>' : '';
+                    const editBtn = '<button class="btn btn-secondary btn-sm btn-job-edit" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">编辑</button> ';
                     tr.innerHTML =
                         '<td class="col-name">' + esc(it.name || '') + '</td>' +
                         '<td class="col-plan-name">' + esc(it.plan_name || '') + '</td>' +
@@ -1242,7 +1310,6 @@
                         '<td class="col-next">' + esc(nextText) + '</td>' +
                         '<td class="col-status">' + statusText + '</td>' +
                         '<td class="col-actions">' +
-                            '<button class="btn btn-secondary btn-sm btn-job-log" data-job-id="' + esc(it.id || '') + '">日志</button> ' +
                             editBtn + runBtn + stopBtn + delBtn +
                         '</td>';
                     tbody.appendChild(tr);
@@ -1281,12 +1348,6 @@
                         const jobId = btn.dataset.jobId;
                         if (!confirm('确定要删除该定时任务吗？')) return;
                         deleteJob(planId, jobId);
-                    };
-                });
-                tbody.querySelectorAll('.btn-job-log').forEach(btn => {
-                    btn.onclick = () => {
-                        const jobId = btn.dataset.jobId;
-                        showJobLog(jobId);
                     };
                 });
                 if (items.length === 0) empty.style.display = 'block';
@@ -1330,8 +1391,6 @@
                 toast('删除定时任务失败: ' + e.message, 'error');
             }
         }
-
-        let _editingPlanId = null;
 
         function openPlanModal(id) {
             const modal = document.getElementById('plan-modal');
@@ -1461,6 +1520,149 @@
             }
         }
 
+        let _editingPlanId = null;
+        let _editingJobPlanId = null;
+        let _editingJobId = null;
+
+        function openJobModal(job) {
+            const modal = document.getElementById('job-modal');
+            const title = document.getElementById('job-modal-title');
+            const planSel = document.getElementById('job-plan-select');
+            const nameEl = document.getElementById('job-name');
+            const cronEl = document.getElementById('job-cron');
+            const typeEl = document.getElementById('job-backup-type');
+            const gzipEl = document.getElementById('job-gzip');
+            const tablesEl = document.getElementById('job-tables');
+            const ignoreEl = document.getElementById('job-ignore');
+            const cleanEl = document.getElementById('job-clean');
+
+            // 重建实例下拉
+            planSel.innerHTML = '<option value="">-- 请选择数据库实例 --</option>';
+            (window._backupPlansCache || []).forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id || '';
+                opt.textContent = (p.name || p.id || '未命名') + (p.database ? ' (' + p.database + ')' : '');
+                planSel.appendChild(opt);
+            });
+
+            if (job && job.plan_id && job.id) {
+                _editingJobPlanId = job.plan_id;
+                _editingJobId = job.id;
+                title.textContent = '编辑调度任务';
+                planSel.value = job.plan_id || '';
+                nameEl.value = job.name || '';
+                cronEl.value = job.cron_expr || job.schedule || '';
+                typeEl.value = job.backup_type || 'full';
+                gzipEl.checked = !!job.enable_gzip;
+                tablesEl.value = job.tables || '';
+                ignoreEl.value = job.ignore_tables || '';
+                cleanEl.value = job.clean_days != null ? job.clean_days : 0;
+            } else {
+                _editingJobPlanId = null;
+                _editingJobId = null;
+                title.textContent = '新增调度任务';
+                planSel.value = '';
+                nameEl.value = '';
+                cronEl.value = '';
+                typeEl.value = 'full';
+                gzipEl.checked = false;
+                tablesEl.value = '';
+                ignoreEl.value = '';
+                cleanEl.value = 0;
+            }
+            modal.style.display = 'flex';
+        }
+
+        function closeJobModal() {
+            const modal = document.getElementById('job-modal');
+            modal.style.display = 'none';
+        }
+
+        async function submitJobModal() {
+            const planSel = document.getElementById('job-plan-select');
+            const nameEl = document.getElementById('job-name');
+            const cronEl = document.getElementById('job-cron');
+            const typeEl = document.getElementById('job-backup-type');
+            const gzipEl = document.getElementById('job-gzip');
+            const tablesEl = document.getElementById('job-tables');
+            const ignoreEl = document.getElementById('job-ignore');
+            const cleanEl = document.getElementById('job-clean');
+
+            const planId = planSel.value.trim();
+            const name = nameEl.value.trim();
+            const schedule = cronEl.value.trim();
+            const backupType = typeEl.value || 'full';
+            const tables = tablesEl.value.trim();
+            const ignore = ignoreEl.value.trim();
+            const cleanDays = parseInt(cleanEl.value, 10) || 0;
+            const enableGzip = !!gzipEl.checked;
+
+            if (!planId || !name || !schedule) {
+                toast('请完整选择数据库实例并填写调度任务名称和调度策略', 'error');
+                return;
+            }
+
+            // 预先校验 cron 表达式，沿用备份模块的计算逻辑
+            const runs = computeNextCronRuns(schedule, 5);
+            const jobPreview = document.getElementById('job-cron-preview');
+            if (!runs || !runs.length) {
+                if (jobPreview) {
+                    jobPreview.textContent = 'cron 表达式无效，请检查格式（例如 0 0 12 * * 表示每天 12:00 执行）。';
+                }
+                toast('cron 表达式无效，请检查后再保存。', 'error');
+                return;
+            }
+            if (jobPreview) {
+                const fmt = d => {
+                    const pad = n => (n < 10 ? '0' + n : '' + n);
+                    const y = d.getFullYear();
+                    const m = pad(d.getMonth() + 1);
+                    const day = pad(d.getDate());
+                    const h = pad(d.getHours());
+                    const mi = pad(d.getMinutes());
+                    return `${y}-${m}-${day} ${h}:${mi}`;
+                };
+                jobPreview.textContent = '最近 5 次预计运行时间：' + runs.map(fmt).join('， ');
+            }
+
+            const body = {
+                name,
+                schedule,
+                backup_type: backupType,
+                tables: tables || undefined,
+                ignore_tables: ignore || undefined,
+                clean_days: cleanDays,
+                enable_gzip: enableGzip
+            };
+
+            // 新增的调度任务默认状态为“停止”
+            if (!_editingJobId) {
+                body.enabled = false;
+            }
+
+            try {
+                const url = _editingJobId
+                    ? ('/backup-plans/' + encodeURIComponent(_editingJobPlanId || planId) + '/jobs/' + encodeURIComponent(_editingJobId))
+                    : ('/backup-plans/' + encodeURIComponent(planId) + '/jobs');
+                const method = _editingJobId ? 'PUT' : 'POST';
+                const r = await fetch(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const j = await r.json().catch(() => ({}));
+                if (j.code === 200) {
+                    toast(_editingJobId ? '调度任务已更新' : '调度任务已创建（状态：停止）');
+                    closeJobModal();
+                    loadScheduledTasks();
+                } else {
+                    toast('保存调度任务失败: ' + (j.msg || ''), 'error');
+                }
+            } catch (e) {
+                toast('保存调度任务失败: ' + e.message, 'error');
+            }
+        }
+
         // 单独保存一个“停止”状态的调度任务（不改变 crontab）
         async function saveScheduleJob() {
             const host = document.getElementById('backup-host').value.trim();
@@ -1525,6 +1727,7 @@
             }
         }
 
+        // showJobLog 保留备用，如后续需要从任务调度中查看单个任务日志可复用
         async function showJobLog(jobId) {
             const modal = document.getElementById('log-modal');
             const title = document.getElementById('log-modal-title');
@@ -1884,13 +2087,59 @@
             cronInput.addEventListener('blur', updateCronPreview);
             updateCronPreview();
         }
+        const jobCronInput = document.getElementById('job-cron');
+        if (jobCronInput) {
+            const updateJobCronPreview = () => {
+                const preview = document.getElementById('job-cron-preview');
+                if (!preview) return;
+                const expr = jobCronInput.value.trim();
+                if (!expr) {
+                    preview.textContent = '未设置调度策略，任务不会自动执行。';
+                    return;
+                }
+                const runs = computeNextCronRuns(expr, 5);
+                if (!runs || !runs.length) {
+                    preview.textContent = 'cron 表达式无效，请检查格式（例如 0 0 12 * * 表示每天 12:00 执行）。';
+                    return;
+                }
+                const fmt = d => {
+                    const pad = n => (n < 10 ? '0' + n : '' + n);
+                    const y = d.getFullYear();
+                    const m = pad(d.getMonth() + 1);
+                    const day = pad(d.getDate());
+                    const h = pad(d.getHours());
+                    const mi = pad(d.getMinutes());
+                    return `${y}-${m}-${day} ${h}:${mi}`;
+                };
+                preview.textContent = '最近 5 次预计运行时间：' + runs.map(fmt).join('， ');
+            };
+            jobCronInput.addEventListener('input', updateJobCronPreview);
+            jobCronInput.addEventListener('blur', updateJobCronPreview);
+            updateJobCronPreview();
+        }
         const backupPlanSelect = document.getElementById('backup-plan-select');
         if (backupPlanSelect) {
             backupPlanSelect.addEventListener('change', function() {
                 const id = this.value;
                 if (!id) return;
-                const plan = (window._backupPlansCache || []).find(p => p.id === id);
-                fillBackupFormFromPlan(plan);
+                (async () => {
+                    try {
+                        const r = await fetch('/backup-plans/' + encodeURIComponent(id));
+                        const j = await r.json();
+                        if (j.code === 200 && j.data) {
+                            fillBackupFormFromPlan(j.data);
+                        } else {
+                            // 回退使用内存缓存里的非敏感字段
+                            const plan = (window._backupPlansCache || []).find(p => p.id === id);
+                            if (plan) fillBackupFormFromPlan(plan);
+                            toast('获取数据库实例详情失败: ' + (j.msg || ''), 'error');
+                        }
+                    } catch (e) {
+                        const plan = (window._backupPlansCache || []).find(p => p.id === id);
+                        if (plan) fillBackupFormFromPlan(plan);
+                        toast('请求数据库实例详情失败: ' + e.message, 'error');
+                    }
+                })();
             });
         }
         const restoreBackupSelect = document.getElementById('restore-backup-dir');

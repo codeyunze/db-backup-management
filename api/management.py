@@ -346,6 +346,24 @@ def create_backup_plan():
         return jsonify({"code": 500, "msg": str(e), "data": None}), 500
 
 
+@app.route("/backup-plans/<plan_id>", methods=["GET"])
+def get_backup_plan(plan_id):
+    """
+    获取单个数据库实例信息（包含密码，用于前端在“数据备份”中自动填充）。
+    """
+    try:
+        plans = _load_backup_plans()
+        for p in plans:
+            if p.get("id") == plan_id:
+                return jsonify({"code": 200, "msg": "ok", "data": p}), 200
+        return (
+            jsonify({"code": 404, "msg": "未找到指定备份计划", "data": None}),
+            404,
+        )
+    except Exception as e:
+        return jsonify({"code": 500, "msg": str(e), "data": None}), 500
+
+
 @app.route("/backup-plans/<plan_id>", methods=["PUT"])
 def update_backup_plan(plan_id):
     """
