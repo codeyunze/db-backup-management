@@ -618,17 +618,28 @@
                 const body = header.nextElementSibling;
                 if (!body || !body.classList.contains('card-body')) return;
                 let icon = header.querySelector('.card-toggle-icon');
+                let label = header.querySelector('.card-toggle-label');
                 if (!icon) {
                     icon = document.createElement('span');
                     icon.className = 'card-toggle-icon';
                     icon.textContent = '−';
                     header.appendChild(icon);
                 }
+                if (!label) {
+                    label = document.createElement('span');
+                    label.className = 'card-toggle-label';
+                    label.style.marginLeft = '4px';
+                    label.style.fontSize = '0.8rem';
+                    label.style.color = '#57606a';
+                    label.textContent = '折叠';
+                    header.appendChild(label);
+                }
                 header.addEventListener('click', (e) => {
                     if (e.target.closest('button, input, select, a, label')) return;
                     const hidden = body.style.display === 'none';
                     body.style.display = hidden ? '' : 'none';
                     icon.textContent = hidden ? '−' : '+';
+                    if (label) label.textContent = hidden ? '折叠' : '展开';
                 });
             });
         }
@@ -1101,6 +1112,7 @@
                         '<td class="col-status">' + statusText + '</td>' +
                         '<td class="col-actions">' +
                             '<button class="btn btn-secondary btn-sm btn-job-edit" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">编辑</button> ' +
+                            '<button class="btn btn-secondary btn-sm btn-job-log" data-job-id="' + esc(it.id || '') + '">日志</button> ' +
                             runBtn + stopBtn + delBtn +
                         '</td>';
                     tbody.appendChild(tr);
@@ -1139,6 +1151,12 @@
                         const jobId = btn.dataset.jobId;
                         if (!confirm('确定要删除该定时任务吗？')) return;
                         deleteJob(planId, jobId);
+                    };
+                });
+                tbody.querySelectorAll('.btn-job-log').forEach(btn => {
+                    btn.onclick = () => {
+                        const jobId = btn.dataset.jobId;
+                        showJobLog(jobId);
                     };
                 });
                 if (items.length === 0) empty.style.display = 'block';
@@ -1180,6 +1198,27 @@
                 }
             } catch (e) {
                 toast('删除定时任务失败: ' + e.message, 'error');
+            }
+        }
+
+        async function showJobLog(jobId) {
+            const modal = document.getElementById('log-modal');
+            const title = document.getElementById('log-modal-title');
+            const content = document.getElementById('log-content');
+            title.textContent = '定时任务 ' + jobId + ' - 运行日志';
+            modal.style.display = 'flex';
+            content.textContent = '加载中...';
+            try {
+                const r = await fetch('/scheduled-tasks/' + encodeURIComponent(jobId) + '/log');
+                const j = await r.json();
+                if (j.code === 200 && j.data) {
+                    content.textContent = j.data.content || '(空)';
+                    content.scrollTop = content.scrollHeight;
+                } else {
+                    content.textContent = '加载失败: ' + (j.msg || '未知错误');
+                }
+            } catch (e) {
+                content.textContent = '请求失败: ' + e.message;
             }
         }
 

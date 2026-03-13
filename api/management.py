@@ -203,15 +203,57 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
                 continue
             new_lines.append(line)
 
-        # 仅在 enabled 且非 remove_only 时重新添加
+        # 仅在 enabled 且非 remove_only 时重新添加真实备份命令
         if not remove_only and enabled and schedule:
+            # 重新加载 plan 信息以获取连接参数
+            plans = _load_backup_plans()
+            plan = next((p for p in plans if p.get("id") == plan_id), None)
+            if not plan:
+                return
+            host = (plan.get("host") or "").strip()
+            user = (plan.get("user") or "").strip()
+            password = plan.get("password") or ""
+            port = int(plan.get("port") or 3306)
+            database = (plan.get("database") or "").strip()
+            if not (host and user and database):
+                return
+
             os.makedirs(JOB_LOGS_DIR, exist_ok=True)
-            cron_log_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.cron.log")
-            # 使用简单 echo 命令，将触发情况写入一个独立 cron 日志文件，后续可扩展为真正执行备份脚本
-            cmd = (
-                f'echo "cron fired for job {job_id} (plan {plan_id})" '
-                f'>> "{cron_log_path}"'
+            cron_log_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.run.log")
+
+            # tables/ignore_tables/clean_days/enable_gzip 以 job 为准，缺省回退到 plan
+            tables = (job.get("tables") or plan.get("tables") or "").strip()
+            ignore_tables = (job.get("ignore_tables") or plan.get("ignore_tables") or "").strip()
+            clean_days = int(job.get("clean_days") if job.get("clean_days") is not None else plan.get("clean_days") or 0)
+            enable_gzip = bool(
+                job.get("enable_gzip")
+                if job.get("enable_gzip") is not None
+                else plan.get("enable_gzip") or False
             )
+
+            # 构造备份脚本命令，使用 MYSQL_PWD 传递密码避免出现在参数中
+            # 假设 mysql-backup-schema-data.sh 支持以下参数：
+            #   -h <host> -P <port> -u <user> -d <database>
+            #   --tables <...> --ignore-tables <...> --clean-days <n> --gzip
+            parts = [
+                f'MYSQL_PWD="{password}"',
+                "/scripts/mysql-backup-schema-data.sh",
+                f"-h {host}",
+                f"-P {port}",
+                f"-u {user}",
+                f"-d {database}",
+            ]
+            if tables:
+                parts.append(f"--tables '{tables}'")
+            if ignore_tables:
+                parts.append(f"--ignore-tables '{ignore_tables}'")
+            if clean_days:
+                parts.append(f"--clean-days {clean_days}")
+            if enable_gzip:
+                parts.append("--gzip")
+
+            cmd = " ".join(parts) + f' >> "{cron_log_path}" 2>&1'
+
             new_lines.append(f"{CRON_MARK_PREFIX}{job_id} plan={plan_id}")
             new_lines.append(f"{schedule} {cmd}")
 
@@ -743,6 +785,23 @@ def delete_backup_job(plan_id, job_id):
         return jsonify({"code": 200, "msg": "删除定时任务成功", "data": None}), 200
     except Exception as e:
         return jsonify({"code": 500, "msg": str(e), "data": None}), 500
+
+
+@app.route("/scheduled-tasks/<job_id>/log", methods=["GET"])
+def get_scheduled_task_log(job_id):
+    """
+    读取指定定时任务的运行日志（job-logs/<job_id>.run.log）。
+    """
+    try:
+        os.makedirs(JOB_LOGS_DIR, exist_ok=True)
+        log_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.run.log")
+        if not os.path.isfile(log_path):
+            return jsonify({"code": 200, "msg": "ok", "data": {"content": "(暂无日志)"}}), 200
+        with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        return jsonify({"code": 200, "msg": "ok", "data": {"content": content}}), 200
+    except Exception as e:
+        return jsonify({"code": 500, "msg": str(e), "data": {"content": str(e)}}), 500
 
 
 @app.route("/db/test-connection", methods=["POST"])
