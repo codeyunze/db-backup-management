@@ -505,6 +505,14 @@
             <div class="card-body" style="display:none;">
                 <div class="form-row">
                     <div class="form-group" style="flex:2;">
+                        <label>选择数据库实例信息</label>
+                        <select id="restore-plan-select">
+                            <option value="">-- 请选择或手动填写下方目标连接信息 --</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:2;">
                         <label>选择全量备份目录 *</label>
                         <select id="restore-backup-dir">
                             <option value="">-- 请选择或从下方列表获取 --</option>
@@ -1753,15 +1761,33 @@
             if (gzipEl) gzipEl.checked = !!plan.enable_gzip;
         }
 
+        function fillRestoreFormFromPlan(plan) {
+            if (!plan) return;
+            const hostEl = document.getElementById('restore-host');
+            const portEl = document.getElementById('restore-port');
+            const userEl = document.getElementById('restore-user');
+            const passEl = document.getElementById('restore-password');
+            const targetDbEl = document.getElementById('restore-target-db');
+            if (hostEl) hostEl.value = plan.host || '';
+            if (portEl) portEl.value = plan.port != null ? plan.port : '3306';
+            if (userEl) userEl.value = plan.user || '';
+            if (passEl) passEl.value = plan.password || '';
+            if (targetDbEl) targetDbEl.value = plan.database || '';
+        }
+
         async function loadBackupPlans() {
             const tbody = document.getElementById('plans-tbody');
             const empty = document.getElementById('plans-empty');
             const planSelect = document.getElementById('backup-plan-select');
+            const restorePlanSelect = document.getElementById('restore-plan-select');
             if (!tbody || !empty) return;
             tbody.innerHTML = '';
             empty.style.display = 'none';
             if (planSelect) {
                 planSelect.innerHTML = '<option value="">-- 请选择或手动填写下方信息 --</option>';
+            }
+            if (restorePlanSelect) {
+                restorePlanSelect.innerHTML = '<option value="">-- 请选择或手动填写下方目标连接信息 --</option>';
             }
             try {
                 const r = await fetch('/backup-plans');
@@ -1790,6 +1816,14 @@
                         opt.value = it.id || '';
                         opt.textContent = (it.name || it.id || '未命名') + (it.database ? ' (' + it.database + ')' : '');
                         planSelect.appendChild(opt);
+                    });
+                }
+                if (restorePlanSelect) {
+                    items.forEach(it => {
+                        const opt = document.createElement('option');
+                        opt.value = it.id || '';
+                        opt.textContent = (it.name || it.id || '未命名') + (it.database ? ' (' + it.database + ')' : '');
+                        restorePlanSelect.appendChild(opt);
                     });
                 }
                 tbody.querySelectorAll('.btn-plan-edit').forEach(btn => {
@@ -2108,6 +2142,30 @@
                     } catch (e) {
                         const plan = (window._backupPlansCache || []).find(p => p.id === id);
                         if (plan) fillBackupFormFromPlan(plan);
+                        toast('请求数据库实例详情失败: ' + e.message, 'error');
+                    }
+                })();
+            });
+        }
+        const restorePlanSelect = document.getElementById('restore-plan-select');
+        if (restorePlanSelect) {
+            restorePlanSelect.addEventListener('change', function() {
+                const id = this.value;
+                if (!id) return;
+                (async () => {
+                    try {
+                        const r = await fetch('/backup-plans/' + encodeURIComponent(id));
+                        const j = await r.json();
+                        if (j.code === 200 && j.data) {
+                            fillRestoreFormFromPlan(j.data);
+                        } else {
+                            const plan = (window._backupPlansCache || []).find(p => p.id === id);
+                            if (plan) fillRestoreFormFromPlan(plan);
+                            toast('获取数据库实例详情失败: ' + (j.msg || ''), 'error');
+                        }
+                    } catch (e) {
+                        const plan = (window._backupPlansCache || []).find(p => p.id === id);
+                        if (plan) fillRestoreFormFromPlan(plan);
                         toast('请求数据库实例详情失败: ' + e.message, 'error');
                     }
                 })();
