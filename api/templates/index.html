@@ -237,13 +237,14 @@
             white-space: nowrap;
             padding: 8px;
         }
-        #scheduled-tasks-table .col-name { width: 18%; }
-        #scheduled-tasks-table .col-type { width: 10%; }
-        #scheduled-tasks-table .col-cron { width: 16%; }
-        #scheduled-tasks-table .col-last { width: 14%; }
-        #scheduled-tasks-table .col-next { width: 14%; }
-        #scheduled-tasks-table .col-status { width: 8%; }
-        #scheduled-tasks-table .col-actions { width: 20%; }
+        #scheduled-tasks-table .col-name { width: 14%; }
+        #scheduled-tasks-table .col-plan-name { width: 12%; }
+        #scheduled-tasks-table .col-type { width: 8%; }
+        #scheduled-tasks-table .col-cron { width: 14%; }
+        #scheduled-tasks-table .col-last { width: 12%; }
+        #scheduled-tasks-table .col-next { width: 12%; }
+        #scheduled-tasks-table .col-status { width: 6%; }
+        #scheduled-tasks-table .col-actions { width: 22%; min-width: 180px; }
         .empty-state {
             padding: 40px;
             text-align: center;
@@ -531,6 +532,7 @@
                     <thead>
                         <tr>
                             <th class="col-name">任务名称</th>
+                            <th class="col-plan-name">实例名称</th>
                             <th class="col-type">备份类型</th>
                             <th class="col-cron">调度策略</th>
                             <th class="col-last">上次执行时间</th>
@@ -676,6 +678,12 @@
                             <select id="job-backup-type">
                                 <option value="full">全量备份</option>
                             </select>
+                        </div>
+                    </div>
+                    <div id="job-plan-info-wrap" class="form-row" style="display:none;">
+                        <div class="form-group" style="flex:1;">
+                            <label style="margin-bottom:4px;">当前实例信息</label>
+                            <div id="job-plan-info" style="padding:8px 12px;background:#f6f8fa;border-radius:6px;font-size:0.85rem;color:#24292f;"></div>
                         </div>
                     </div>
                     <div class="form-row">
@@ -1570,7 +1578,53 @@
                 ignoreEl.value = '';
                 cleanEl.value = 0;
             }
+            refreshJobPlanInfo(planSel.value || null);
             modal.style.display = 'flex';
+        }
+
+        async function refreshJobPlanInfo(planId) {
+            const wrap = document.getElementById('job-plan-info-wrap');
+            const infoEl = document.getElementById('job-plan-info');
+            if (!wrap || !infoEl) return;
+            if (!planId || !planId.trim()) {
+                wrap.style.display = 'none';
+                infoEl.textContent = '';
+                return;
+            }
+            wrap.style.display = 'flex';
+            infoEl.textContent = '加载中...';
+            try {
+                const r = await fetch('/backup-plans/' + encodeURIComponent(planId));
+                const j = await r.json().catch(() => ({}));
+                if (r.ok && j.code === 200 && j.data) {
+                    const p = j.data;
+                    const parts = [];
+                    if (p.name) parts.push('实例名称: ' + p.name);
+                    if (p.host) parts.push('主机: ' + p.host);
+                    if (p.port != null && p.port !== '') parts.push('端口: ' + p.port);
+                    if (p.user) parts.push('用户名: ' + p.user);
+                    if (p.database) parts.push('数据库: ' + p.database);
+                    if (p.backup_dir) parts.push('备份目录: ' + p.backup_dir);
+                    infoEl.textContent = parts.length ? parts.join('　') : '无详情';
+                } else {
+                    const fromCache = (window._backupPlansCache || []).find(x => (x.id || '') === planId);
+                    if (fromCache) {
+                        const p = fromCache;
+                        const parts = [];
+                        if (p.name) parts.push('实例名称: ' + p.name);
+                        if (p.host) parts.push('主机: ' + p.host);
+                        if (p.port != null && p.port !== '') parts.push('端口: ' + p.port);
+                        if (p.user) parts.push('用户名: ' + p.user);
+                        if (p.database) parts.push('数据库: ' + p.database);
+                        if (p.backup_dir) parts.push('备份目录: ' + (p.backup_dir || '/data/backup/mysql'));
+                        infoEl.textContent = parts.length ? parts.join('　') : '无详情';
+                    } else {
+                        infoEl.textContent = '无法加载实例信息';
+                    }
+                }
+            } catch (e) {
+                infoEl.textContent = '加载失败: ' + e.message;
+            }
         }
 
         function closeJobModal() {
@@ -2116,6 +2170,12 @@
             jobCronInput.addEventListener('input', updateJobCronPreview);
             jobCronInput.addEventListener('blur', updateJobCronPreview);
             updateJobCronPreview();
+        }
+        const jobPlanSelect = document.getElementById('job-plan-select');
+        if (jobPlanSelect) {
+            jobPlanSelect.addEventListener('change', function() {
+                refreshJobPlanInfo(this.value ? this.value.trim() : null);
+            });
         }
         const backupPlanSelect = document.getElementById('backup-plan-select');
         if (backupPlanSelect) {
