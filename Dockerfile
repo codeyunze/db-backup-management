@@ -19,9 +19,12 @@ RUN apt-get update \
         python3 \
         python3-flask \
         bash \
+        vim-tiny \
+        gzip \
         ca-certificates \
         tzdata \
         libaio1 \
+        cron \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
     && echo "Asia/Shanghai" > /etc/timezone \
@@ -51,4 +54,4 @@ EXPOSE 8081
 
 VOLUME ["/scripts", "/data/backup/mysql"]
 
-CMD ["python3", "management.py"]
+CMD ["bash", "-c", "cron && python3 management.py"]

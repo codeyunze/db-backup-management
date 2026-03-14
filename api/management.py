@@ -19,6 +19,13 @@ app = Flask(__name__)
 # 脚本与备份根目录，支持环境变量覆盖（本地运行时可设置为本项目 scripts 与备份目录）
 SCRIPT_DIR = os.environ.get("SCRIPT_DIR", "/scripts")
 BACKUP_ROOT = os.environ.get("BACKUP_ROOT", "/data/backup/mysql")
+# 备份计划配置文件路径（JSON 持久化）
+BACKUP_PLANS_FILE = os.environ.get(
+    "BACKUP_PLANS_FILE", os.path.join(BACKUP_ROOT, "backup-plans.json")
+)
+JOB_LOGS_DIR = os.path.join(BACKUP_ROOT, "job-logs")
+JOB_SCRIPTS_DIR = os.path.join(BACKUP_ROOT, "jobs")
+CRON_MARK_PREFIX = "# db-backup-management job "
 
 # 备份目录命名格式：{数据库名}_YYYYMMDD_HHMMSS
 BACKUP_DIR_PATTERN = re.compile(r"^(.+)_(\d{8})_(\d{6})$")
@@ -51,6 +58,793 @@ def _run_script(script_name, args_list, timeout=None):
         return False, "", "执行超时", -1
     except Exception as e:
         return False, "", str(e), -1
+
+
+def _load_backup_plans():
+    """
+    从 JSON 文件加载备份计划列表。
+    返回列表，每个元素为 dict，至少包含 id/name 基本信息。
+    """
+    path = BACKUP_PLANS_FILE
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, list):
+            return []
+        # 过滤掉明显不合法的项
+        cleaned = []
+        for item in data:
+            if isinstance(item, dict) and item.get("id") and item.get("name"):
+                cleaned.append(item)
+        return cleaned
+    except Exception:
+        return []
+
+
+def _save_backup_plans(plans):
+    """
+    将备份计划列表写回 JSON 文件。
+    """
+    path = BACKUP_PLANS_FILE
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(plans, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, path)
+
+
+def _generate_plan_id():
+    """
+    简单生成一个字符串 ID（避免额外依赖 uuid 库）。
+    """
+    import time
+
+    return f"plan_{int(time.time() * 1000)}"
+
+
+def _generate_job_id():
+    """
+    简单生成一个定时任务 ID。
+    """
+    import time
+
+    return f"job_{int(time.time() * 1000)}"
+
+
+def _append_job_log(job_id: str, message: str) -> None:
+    """
+    将一条定时任务运行日志追加写入到 job-logs/<job_id>.log 中。
+    """
+    try:
+        os.makedirs(JOB_LOGS_DIR, exist_ok=True)
+        log_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.log")
+        import time as _time
+
+        ts = _time.strftime("%Y-%m-%d %H:%M:%S", _time.localtime())
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] {message}\n")
+    except Exception:
+        # 日志记录失败不影响主流程
+        return
+
+
+def _read_crontab_lines() -> list[str]:
+    """
+    读取当前用户 crontab（按行返回）。若不存在 crontab，则返回空列表。
+    """
+    try:
+        result = subprocess.run(
+            ["crontab", "-l"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=os.environ,
+        )
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+        if result.returncode != 0:
+            # 没有 crontab 的典型输出
+            if "no crontab" in stderr.lower() or "no crontab" in stdout.lower():
+                return []
+            return []
+        return stdout.splitlines()
+    except subprocess.TimeoutExpired:
+        return []
+    except Exception:
+        return []
+
+
+def _write_crontab_lines(lines: list[str]) -> None:
+    """
+    覆盖写入 crontab 内容。
+    """
+    try:
+        text = "\n".join(lines).rstrip() + "\n" if lines else ""
+        subprocess.run(
+            ["crontab", "-"],
+            input=text,
+            text=True,
+            timeout=10,
+            env=os.environ,
+        )
+    except Exception:
+        # 写 crontab 失败不影响主流程，但会导致系统级定时任务不同步
+        return
+
+
+def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> None:
+    """
+    根据 job 的 enabled / schedule，在系统 crontab 中添加或移除对应的条目。
+    - 每个 job 使用一行标记注释 + 一行实际 cron 命令；
+    - 标记行格式:  "# db-backup-management job <job_id> plan=<plan_id>"
+    - 命令行目前仅写一条 echo 到对应 job 的 cron 日志文件，用于验证调度是否生效。
+    """
+    try:
+        job_id = job.get("id")
+        if not job_id:
+            return
+        schedule = (job.get("schedule") or "").strip()
+        enabled = bool(job.get("enabled", True))
+
+        lines = _read_crontab_lines()
+        new_lines: list[str] = []
+        skip_next = False
+        marker_sub = f"{CRON_MARK_PREFIX}{job_id}"
+
+        for line in lines:
+            if skip_next:
+                # 跳过标记后的下一行（实际 cron 命令）
+                skip_next = False
+                continue
+            if line.strip().startswith(CRON_MARK_PREFIX) and job_id in line:
+                # 找到该 job 的标记行，跳过它和下一行
+                skip_next = True
+                continue
+            new_lines.append(line)
+
+        # 仅在 enabled 且非 remove_only 时重新添加真实备份命令
+        if not remove_only and enabled and schedule:
+            # 重新加载 plan 信息以获取连接参数
+            plans = _load_backup_plans()
+            plan = next((p for p in plans if p.get("id") == plan_id), None)
+            if not plan:
+                return
+            host = (plan.get("host") or "").strip()
+            user = (plan.get("user") or "").strip()
+            password = plan.get("password") or ""
+            port = int(plan.get("port") or 3306)
+            database = (plan.get("database") or "").strip()
+            if not (host and user and database):
+                return
+
+            os.makedirs(JOB_LOGS_DIR, exist_ok=True)
+            os.makedirs(JOB_SCRIPTS_DIR, exist_ok=True)
+            cron_log_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.run.log")
+            meta_log_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.log")
+            job_script_path = os.path.join(JOB_SCRIPTS_DIR, f"{job_id}.sh")
+
+            # tables/ignore_tables/clean_days/enable_gzip 以 job 为准，缺省回退到 plan
+            tables = (job.get("tables") or plan.get("tables") or "").strip()
+            ignore_tables = (job.get("ignore_tables") or plan.get("ignore_tables") or "").strip()
+            clean_days = int(job.get("clean_days") if job.get("clean_days") is not None else plan.get("clean_days") or 0)
+            enable_gzip = bool(
+                job.get("enable_gzip")
+                if job.get("enable_gzip") is not None
+                else plan.get("enable_gzip") or False
+            )
+
+            # 生成单独的 job 执行脚本 job-logs/job_<id>.sh
+            script_lines = [
+                "#!/bin/bash",
+                f'echo "$(date +\'%Y-%m-%d %H:%M:%S\') 调度触发备份 job={job_id} plan={plan_id}" >> "{meta_log_path}"',
+                'PATH="/usr/local/bin:/usr/bin:/bin:$PATH"',
+                "/scripts/mysql-backup-schema-data.sh "
+                + f"-H {host} -P {port} -u {user} -p \"{password}\" -d {database} "
+                + (f"--tables '{tables}' " if tables else "")
+                + (f"--ignore-tables '{ignore_tables}' " if ignore_tables else "")
+                + (f"--clean-days {clean_days} " if clean_days else "")
+                + ("--gzip " if enable_gzip else "")
+                + f'>> "{cron_log_path}" 2>&1',
+                "",
+            ]
+            try:
+                with open(job_script_path, "w", encoding="utf-8") as sf:
+                    sf.write("\n".join(script_lines))
+                os.chmod(job_script_path, 0o755)
+            except Exception:
+                return
+
+            new_lines.append(f"{CRON_MARK_PREFIX}{job_id} plan={plan_id}")
+            new_lines.append(f"{schedule} sh \"{job_script_path}\"")
+
+        _write_crontab_lines(new_lines)
+    except Exception:
+        return
+
+
+@app.route("/backup-plans", methods=["GET"])
+def list_backup_plans():
+    """
+    列出所有备份计划（数据库实例信息 + 其下的定时任务）。
+    """
+    plans = _load_backup_plans()
+    # 为安全起见，默认不回显密码字段
+    safe_plans = []
+    for p in plans:
+        q = dict(p)
+        if "password" in q:
+            q["password"] = None
+        safe_plans.append(q)
+    return jsonify({"code": 200, "msg": "ok", "data": {"items": safe_plans}}), 200
+
+
+@app.route("/backup-plans", methods=["POST"])
+def create_backup_plan():
+    """
+    创建一个新的备份计划（数据库实例信息，仅记录连接配置）。
+    请求体 JSON 建议字段：
+    - name: 实例名称（必填，唯一或业务上区分）
+    - host, port, user, password, database: 数据库连接信息（必填）
+    - backup_dir: 备份根目录（可选，默认 BACKUP_ROOT）
+    具体的备份策略参数（tables/clean_days/enable_gzip 等）下沉到 jobs 中记录。
+    """
+    try:
+        data = request.get_json() or {}
+        name = (data.get("name") or "").strip()
+        host = (data.get("host") or "").strip()
+        user = (data.get("user") or "").strip()
+        password = data.get("password") or ""
+        database = (data.get("database") or "").strip()
+        if not all([name, host, user, database]):
+            return (
+                jsonify(
+                    {
+                        "code": 400,
+                        "msg": "缺少必要参数: name, host, user, database",
+                        "data": None,
+                    }
+                ),
+                400,
+            )
+        plans = _load_backup_plans()
+        # 简单防重复：同名计划不允许重复创建
+        for p in plans:
+            if p.get("name") == name:
+                return (
+                    jsonify(
+                        {
+                            "code": 400,
+                            "msg": "已存在同名备份计划",
+                            "data": None,
+                        }
+                    ),
+                    400,
+                )
+        plan_id = _generate_plan_id()
+        # 简化后的实例信息仅保留连接相关字段和 jobs 列表
+        plan = {
+            "id": plan_id,
+            "name": name,
+            "host": host,
+            "port": int(data.get("port") or 3306),
+            "user": user,
+            "password": password,
+            "database": database,
+            "backup_dir": data.get("backup_dir") or BACKUP_ROOT,
+            # 针对该连接配置下的定时任务列表
+            "jobs": [],
+        }
+        plans.append(plan)
+        _save_backup_plans(plans)
+        # 返回时隐藏密码
+        safe_plan = dict(plan)
+        safe_plan["password"] = None
+        return jsonify({"code": 200, "msg": "创建成功", "data": safe_plan}), 200
+    except Exception as e:
+        return jsonify({"code": 500, "msg": str(e), "data": None}), 500
+
+
+@app.route("/backup-plans/<plan_id>", methods=["GET"])
+def get_backup_plan(plan_id):
+    """
+    获取单个数据库实例信息（包含密码，用于前端在“数据备份”中自动填充）。
+    """
+    try:
+        plans = _load_backup_plans()
+        for p in plans:
+            if p.get("id") == plan_id:
+                return jsonify({"code": 200, "msg": "ok", "data": p}), 200
+        return (
+            jsonify({"code": 404, "msg": "未找到指定备份计划", "data": None}),
+            404,
+        )
+    except Exception as e:
+        return jsonify({"code": 500, "msg": str(e), "data": None}), 500
+
+
+@app.route("/backup-plans/<plan_id>", methods=["PUT"])
+def update_backup_plan(plan_id):
+    """
+    更新指定备份计划。
+    - 支持部分字段更新；未提供的字段保持不变。
+    - 密码字段 password 如需更新，请显式传入新值；否则保持原值。
+    """
+    try:
+        data = request.get_json() or {}
+        plans = _load_backup_plans()
+        found = False
+        for p in plans:
+            if p.get("id") == plan_id:
+                found = True
+                # 可更新字段（仅连接/实例信息）
+                for key in [
+                    "name",
+                    "host",
+                    "port",
+                    "user",
+                    "database",
+                    "backup_dir",
+                ]:
+                    if key in data and data[key] is not None:
+                        if key in ("port", "clean_days"):
+                            try:
+                                p[key] = int(data[key])
+                            except Exception:
+                                continue
+                        else:
+                            p[key] = data[key]
+                # 密码单独处理：允许显式更新或保持原值
+                if "password" in data and data["password"] is not None:
+                    p["password"] = data["password"]
+                break
+        if not found:
+            return (
+                jsonify({"code": 404, "msg": "未找到指定备份计划", "data": None}),
+                404,
+            )
+        _save_backup_plans(plans)
+        safe_plan = None
+        for p in plans:
+            if p.get("id") == plan_id:
+                safe_plan = dict(p)
+                if "password" in safe_plan:
+                    safe_plan["password"] = None
+                break
+        return jsonify({"code": 200, "msg": "更新成功", "data": safe_plan}), 200
+    except Exception as e:
+        return jsonify({"code": 500, "msg": str(e), "data": None}), 500
+
+
+@app.route("/backup-plans/<plan_id>", methods=["DELETE"])
+def delete_backup_plan(plan_id):
+    """
+    删除指定备份计划。
+    """
+    try:
+        plans = _load_backup_plans()
+        new_plans = []
+        found = False
+        has_jobs = False
+        for p in plans:
+            if p.get("id") == plan_id:
+                found = True
+                jobs = p.get("jobs") or []
+                if isinstance(jobs, list) and jobs:
+                    has_jobs = True
+                continue
+            new_plans.append(p)
+        if not found:
+            return (
+                jsonify({"code": 404, "msg": "未找到指定备份计划", "data": None}),
+                404,
+            )
+        if has_jobs:
+            return (
+                jsonify(
+                    {
+                        "code": 400,
+                        "msg": "该实例下仍存在定时任务，请先在“定时任务列表”中清理完定时任务后再删除实例信息。",
+                        "data": None,
+                    }
+                ),
+                400,
+            )
+        _save_backup_plans(new_plans)
+        return jsonify({"code": 200, "msg": "删除成功", "data": None}), 200
+    except Exception as e:
+        return jsonify({"code": 500, "msg": str(e), "data": None}), 500
+
+
+@app.route("/backup-plans/<plan_id>/jobs", methods=["POST"])
+def create_backup_job(plan_id):
+    """
+    在指定备份实例（plan）下新增一个定时任务记录。
+
+    请求体示例：
+    {
+        "schedule": "0 0 12 * *",
+        "backup_type": "full",        # full / incremental
+        "tables": "user,order",
+        "ignore_tables": "order_log",
+        "clean_days": 7,
+        "enable_gzip": true
+    }
+
+    这里只负责把“执行计划”及当时的备份参数持久化到 backup-plans.json，不负责真正写入 crontab。
+    """
+    try:
+        data = request.get_json() or {}
+        schedule = (data.get("schedule") or "").strip()
+        if not schedule:
+            return (
+                jsonify({"code": 400, "msg": "缺少调度策略 schedule", "data": None}),
+                400,
+            )
+        backup_type = (data.get("backup_type") or "full").strip() or "full"
+        plans = _load_backup_plans()
+        found = False
+        for p in plans:
+            if p.get("id") == plan_id:
+                found = True
+                jobs = p.get("jobs") or []
+                if not isinstance(jobs, list):
+                    jobs = []
+                job_id = _generate_job_id()
+                import time
+
+                job = {
+                    "id": job_id,
+                    "name": (data.get("name") or "").strip()
+                    if isinstance(data.get("name"), str)
+                    else "",
+                    "schedule": schedule,
+                    "backup_type": backup_type,
+                    "tables": data.get("tables") or p.get("tables") or "",
+                    "ignore_tables": data.get("ignore_tables")
+                    or p.get("ignore_tables")
+                    or "",
+                    "clean_days": int(data.get("clean_days") or p.get("clean_days") or 0),
+                    "enable_gzip": bool(
+                        data.get("enable_gzip")
+                        if data.get("enable_gzip") is not None
+                        else p.get("enable_gzip") or False
+                    ),
+                    # 初始默认为运行状态，可在前端切换运行/停止
+                    # 新建任务默认处于“停止”状态，由用户在前端点击“运行”后再写入 crontab
+                    "enabled": bool(
+                        data.get("enabled")
+                        if data.get("enabled") is not None
+                        else False
+                    ),
+                    "created_at": time.strftime(
+                        "%Y-%m-%d %H:%M:%S", time.localtime()
+                    ),
+                }
+                jobs.append(job)
+                p["jobs"] = jobs
+                _append_job_log(
+                    job_id,
+                    f"创建定时任务: plan_id={plan_id}, name={job['name']!r}, schedule={schedule!r}, backup_type={backup_type}",
+                )
+                break
+        if not found:
+            return (
+                jsonify({"code": 404, "msg": "未找到指定备份计划", "data": None}),
+                404,
+            )
+        _save_backup_plans(plans)
+        safe_plan = None
+        for p in plans:
+            if p.get("id") == plan_id:
+                safe_plan = dict(p)
+                if "password" in safe_plan:
+                    safe_plan["password"] = None
+                break
+        return (
+            jsonify({"code": 200, "msg": "创建定时任务成功", "data": safe_plan}),
+            200,
+        )
+    except Exception as e:
+        return jsonify({"code": 500, "msg": str(e), "data": None}), 500
+
+
+def _parse_crontab_l():
+    """
+    执行 crontab -l 并解析为任务列表。
+    返回 list[dict]，每项含: name, database, backup_type, schedule, clean_days, last_run_at, next_run_at, enabled, raw_command。
+    """
+    try:
+        result = subprocess.run(
+            ["crontab", "-l"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=os.environ,
+        )
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+        # 无 crontab 时 exit code 为 1，且常有 "no crontab for ..."
+        if result.returncode != 0:
+            if "no crontab" in stderr.lower() or "no crontab" in stdout.lower():
+                return []
+            return []
+        lines = stdout.split("\n")
+        items = []
+        last_comment = ""
+        for line in lines:
+            raw = line
+            line = line.strip()
+            if not line:
+                last_comment = ""
+                continue
+            if line.startswith("#"):
+                last_comment = line.lstrip("#").strip()
+                continue
+            # 有效 cron 行：前 5 段为 分 时 日 月 周，其余为命令
+            parts = line.split()
+            if len(parts) < 6:
+                continue
+            schedule = " ".join(parts[0:5])
+            command = " ".join(parts[5:])
+            name = last_comment if last_comment else (command[:80] + ("..." if len(command) > 80 else ""))
+            last_comment = ""
+            # 根据命令推断备份类型、数据库（本项目的脚本特征）；前端用 incremental/full 区分显示
+            backup_type = "incremental" if "incremental" in command or "backup-incremental" in command else "full"
+            database = ""
+            for opt in ["--database", "-d", "database="]:
+                if opt in command:
+                    try:
+                        if "=" in opt:
+                            i = command.find(opt) + len(opt)
+                            rest = command[i:]
+                            end = rest.find(" ") if " " in rest else len(rest)
+                            database = rest[:end].strip("'\"").strip()
+                        else:
+                            idx = command.find(opt)
+                            after = command[idx + len(opt):].strip()
+                            if after.startswith("="):
+                                after = after[1:].strip()
+                            database = (after.split() or [""])[0].strip("'\"")
+                        if database:
+                            break
+                    except Exception:
+                        pass
+            if not database and ("mysql-backup" in command or "mall_" in command):
+                m = re.search(r"mall[_\-]?\w*|([a-zA-Z0-9_]+)_\d{8}_", command)
+                if m:
+                    database = (m.group(0) or m.group(1) or "").strip("_")
+            items.append({
+                "id": f"cron_{len(items)}",
+                "name": name,
+                "database": database or "-",
+                "backup_type": backup_type,
+                "cron_expr": schedule,
+                "schedule": schedule,
+                "clean_days": None,
+                "last_run_at": "-",
+                "next_run_at": "-",
+                "enabled": True,
+                "raw_command": command,
+            })
+        return items
+    except subprocess.TimeoutExpired:
+        return []
+    except Exception:
+        return []
+
+
+@app.route("/scheduled-tasks", methods=["GET"])
+def list_scheduled_tasks():
+    """
+    定时任务列表。
+
+    当前版本：优先展示 backup-plans.json 中各实例下配置的 jobs，
+    每个 job 表示一条“备份调度记录”，不直接从 crontab 解析。
+    """
+    try:
+        plans = _load_backup_plans()
+        items = []
+        for p in plans:
+            plan_id = p.get("id")
+            plan_name = p.get("name") or ""
+            database = p.get("database") or ""
+            jobs = p.get("jobs") or []
+            if not isinstance(jobs, list):
+                continue
+            for job in jobs:
+                j = dict(job or {})
+                j_id = j.get("id") or ""
+                schedule = j.get("schedule") or ""
+                backup_type = j.get("backup_type") or "full"
+                job_name = j.get("name") or ""
+                clean_days = j.get("clean_days")
+                enable_gzip = j.get("enable_gzip")
+                created_at = j.get("created_at") or "-"
+                enabled = j.get("enabled")
+                if enabled is None:
+                    enabled = True
+                items.append(
+                    {
+                        "id": j_id,
+                        "name": job_name or plan_name,
+                        "plan_id": plan_id,
+                        "plan_name": plan_name,
+                        "database": database,
+                        "backup_type": backup_type,
+                        "cron_expr": schedule,
+                        "schedule": schedule,
+                        "clean_days": clean_days,
+                        "enable_gzip": enable_gzip,
+                        "created_at": created_at,
+                        "last_run_at": "-",
+                        "next_run_at": "-",
+                        "enabled": enabled,
+                    }
+                )
+        return jsonify({"code": 200, "msg": "ok", "data": {"items": items}}), 200
+    except Exception as e:
+        return jsonify({"code": 500, "msg": str(e), "data": {"items": []}}), 500
+
+
+@app.route("/backup-plans/<plan_id>/jobs/<job_id>", methods=["PUT"])
+def update_backup_job(plan_id, job_id):
+    """
+    更新指定备份计划下的一条定时任务。
+    可更新字段：name, schedule, backup_type, tables, ignore_tables, clean_days, enable_gzip, enabled。
+    """
+    try:
+        data = request.get_json() or {}
+        plans = _load_backup_plans()
+        found = False
+        for p in plans:
+            if p.get("id") != plan_id:
+                continue
+            jobs = p.get("jobs") or []
+            if not isinstance(jobs, list):
+                jobs = []
+            for j in jobs:
+                if j.get("id") != job_id:
+                    continue
+                found = True
+                old_enabled = bool(j.get("enabled", True))
+                old_schedule = j.get("schedule") or ""
+                old_name = j.get("name") or ""
+                for key in [
+                    "name",
+                    "schedule",
+                    "backup_type",
+                    "tables",
+                    "ignore_tables",
+                    "clean_days",
+                    "enable_gzip",
+                    "enabled",
+                ]:
+                    if key in data and data[key] is not None:
+                        if key == "clean_days":
+                            try:
+                                j[key] = int(data[key])
+                            except Exception:
+                                continue
+                        elif key in ("enable_gzip", "enabled"):
+                            j[key] = bool(data[key])
+                        else:
+                            j[key] = data[key]
+                new_enabled = bool(j.get("enabled", True))
+                new_schedule = j.get("schedule") or ""
+                new_name = j.get("name") or ""
+                # 记录状态/计划变更日志
+                if new_enabled != old_enabled:
+                    _append_job_log(
+                        job_id,
+                        f"更新定时任务状态: plan_id={plan_id}, name={new_name!r}, enabled={new_enabled}",
+                    )
+                if new_schedule != old_schedule:
+                    _append_job_log(
+                        job_id,
+                        f"更新定时任务调度: plan_id={plan_id}, name={new_name!r}, schedule={new_schedule!r}",
+                    )
+                # 同步系统 crontab
+                _sync_job_crontab(plan_id, j)
+                break
+            p["jobs"] = jobs
+            if found:
+                break
+        if not found:
+            return (
+                jsonify({"code": 404, "msg": "未找到指定定时任务", "data": None}),
+                404,
+            )
+        _save_backup_plans(plans)
+        return jsonify({"code": 200, "msg": "更新定时任务成功", "data": None}), 200
+    except Exception as e:
+        return jsonify({"code": 500, "msg": str(e), "data": None}), 500
+
+
+@app.route("/backup-plans/<plan_id>/jobs/<job_id>", methods=["DELETE"])
+def delete_backup_job(plan_id, job_id):
+    """
+    删除指定备份计划下的一条定时任务。
+    若任务处于运行状态（enabled=True），不允许删除。
+    """
+    try:
+        plans = _load_backup_plans()
+        found = False
+        enabled = False
+        for p in plans:
+            if p.get("id") != plan_id:
+                continue
+            jobs = p.get("jobs") or []
+            if not isinstance(jobs, list):
+                jobs = []
+            new_jobs = []
+            for j in jobs:
+                if j.get("id") == job_id:
+                    found = True
+                    enabled = bool(j.get("enabled", True))
+                    # 删除前，确保从 crontab 中移除对应条目
+                    _sync_job_crontab(plan_id, j, remove_only=True)
+                    # 不立即删除，先根据状态判断
+                    continue
+                new_jobs.append(j)
+            if found:
+                if enabled:
+                    return (
+                        jsonify(
+                            {
+                                "code": 400,
+                                "msg": "运行中的定时任务不能删除，请先停止任务。",
+                                "data": None,
+                            }
+                        ),
+                        400,
+                    )
+                p["jobs"] = new_jobs
+                _append_job_log(job_id, f"删除定时任务: plan_id={plan_id}")
+                break
+        if not found:
+            return (
+                jsonify({"code": 404, "msg": "未找到指定定时任务", "data": None}),
+                404,
+            )
+        _save_backup_plans(plans)
+        return jsonify({"code": 200, "msg": "删除定时任务成功", "data": None}), 200
+    except Exception as e:
+        return jsonify({"code": 500, "msg": str(e), "data": None}), 500
+
+
+@app.route("/scheduled-tasks/<job_id>/log", methods=["GET"])
+def get_scheduled_task_log(job_id):
+    """
+    读取指定定时任务的日志：
+    - 元日志: job-logs/<job_id>.log（创建/更新/删除/触发记录）
+    - 运行日志: job-logs/<job_id>.run.log（备份脚本标准输出/错误）
+    """
+    try:
+        os.makedirs(JOB_LOGS_DIR, exist_ok=True)
+        meta_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.log")
+        run_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.run.log")
+        meta = ""
+        run = ""
+        if os.path.isfile(meta_path):
+            with open(meta_path, "r", encoding="utf-8", errors="ignore") as f:
+                meta = f.read()
+        if os.path.isfile(run_path):
+            with open(run_path, "r", encoding="utf-8", errors="ignore") as f:
+                run = f.read()
+        if not meta and not run:
+            content = "(暂无日志)"
+        else:
+            parts = []
+            if meta:
+                parts.append("==== 元日志 (job.log) ====\n" + meta.rstrip())
+            if run:
+                parts.append("==== 运行日志 (job.run.log) ====\n" + run.rstrip())
+            content = "\n\n".join(parts)
+        return jsonify({"code": 200, "msg": "ok", "data": {"content": content}}), 200
+    except Exception as e:
+        return jsonify({"code": 500, "msg": str(e), "data": {"content": str(e)}}), 500
 
 
 @app.route("/db/test-connection", methods=["POST"])
@@ -123,6 +917,7 @@ def backup():
     - tables: 白名单表，逗号分隔（可选）
     - ignore_tables: 黑名单表，逗号分隔（可选）
     - clean_days: 清理 N 天前的备份，0 不清理（可选）
+    - enable_gzip: 是否启用 gzip 压缩（可选，默认 false）
     """
     try:
         data = request.get_json() or {}
@@ -153,6 +948,8 @@ def backup():
             args.extend(["-i", data["ignore_tables"]])
         if data.get("clean_days") is not None and int(data["clean_days"]) > 0:
             args.extend(["-c", str(int(data["clean_days"]))])
+        if data.get("enable_gzip"):
+            args.append("--gzip")
 
         success, stdout, stderr, returncode = _run_script("mysql-backup-schema-data.sh", args)
 

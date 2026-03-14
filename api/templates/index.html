@@ -205,6 +205,7 @@
         }
         .col-time {
             width: 165px;
+            min-width: 165px;
             white-space: nowrap;
         }
         .col-size {
@@ -214,11 +215,73 @@
             width: 320px;
             white-space: nowrap;
         }
+        #plans-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+        #plans-table th,
+        #plans-table td {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        #scheduled-tasks-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+        #scheduled-tasks-table th,
+        #scheduled-tasks-table td {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            padding: 8px;
+        }
+        #scheduled-tasks-table .col-name { width: 20%; }
+        #scheduled-tasks-table .col-plan-name { width: 18%; }
+        #scheduled-tasks-table .col-type { width: 8%; }
+        #scheduled-tasks-table .col-cron { width: 14%; }
+        #scheduled-tasks-table .col-last { width: 165px; min-width: 165px; }
+        #scheduled-tasks-table .col-next { width: 165px; min-width: 165px; }
+        #scheduled-tasks-table .col-status { width: 6%; }
+        #scheduled-tasks-table .col-actions { width: 26%; min-width: 280px; overflow: visible; white-space: nowrap; }
+        #scheduled-tasks-table td.col-actions { overflow: visible; }
         .empty-state {
             padding: 40px;
             text-align: center;
             color: #8c959f;
             font-size: 0.9rem;
+        }
+        .job-plan-info-box {
+            padding: 8px 12px;
+            background: #f6f8fa;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            color: #24292f;
+        }
+        .job-plan-info-box table.job-plan-info-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+        .job-plan-info-box table.job-plan-info-table th {
+            text-align: left;
+            font-weight: 600;
+            color: #57606a;
+            padding: 4px 12px 4px 0;
+            width: 1%;
+            white-space: nowrap;
+        }
+        .job-plan-info-box table.job-plan-info-table td {
+            padding: 4px 16px 4px 0;
+            max-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .job-plan-info-box table.job-plan-info-table tr + tr th,
+        .job-plan-info-box table.job-plan-info-table tr + tr td {
+            padding-top: 6px;
         }
         .actions { display: flex; gap: 8px; align-items: center; }
         .expandable {
@@ -282,14 +345,79 @@
 <body>
     <div class="container">
         <h1>MySQL 备份管理</h1>
-
-        <!-- 新建备份 -->
+        <!-- 数据库实例信息（连接配置，仅记录连接参数） -->
         <div class="card">
             <div class="card-header collapsible-header">
-                新建备份
-                <span class="badge badge-primary">支持全量 / 增量</span>
+                <span>数据库实例信息</span>
+                <span>
+                    <button class="btn btn-secondary btn-sm" onclick="loadBackupPlans()">刷新</button>
+                    <button class="btn btn-primary btn-sm" onclick="openPlanModal(null)">新增</button>
+                </span>
             </div>
             <div class="card-body">
+                <table id="plans-table">
+                    <thead>
+                        <tr>
+                            <th>名称</th>
+                            <th>主机</th>
+                            <th>端口</th>
+                            <th>数据库</th>
+                            <th>用户名</th>
+                            <th class="col-actions">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="plans-tbody"></tbody>
+                </table>
+                <div id="plans-empty" class="empty-state" style="display:none;">暂无已保存的备份计划</div>
+            </div>
+        </div>
+
+        <!-- 任务调度 -->
+        <div class="card">
+            <div class="card-header collapsible-header">
+                <span>任务调度</span>
+                <span>
+                    <button class="btn btn-secondary btn-sm" onclick="loadScheduledTasks()">刷新</button>
+                    <button class="btn btn-primary btn-sm" onclick="openJobModal(null)">新增</button>
+                </span>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive" style="overflow-x: auto;">
+                    <table id="scheduled-tasks-table" style="min-width: 1100px;">
+                        <thead>
+                            <tr>
+                                <th class="col-name">任务名称</th>
+                                <th class="col-plan-name">实例名称</th>
+                                <th class="col-type">备份类型</th>
+                                <th class="col-cron">调度策略</th>
+                                <th class="col-last">上次执行时间</th>
+                                <th class="col-next">下次执行时间</th>
+                                <th class="col-status">状态</th>
+                                <th class="col-actions">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="scheduled-tasks-tbody"></tbody>
+                    </table>
+                </div>
+                <div id="scheduled-tasks-empty" class="empty-state" style="display:none;">暂无定时任务</div>
+            </div>
+        </div>
+
+        <!-- 数据备份 -->
+        <div class="card">
+            <div class="card-header collapsible-header">
+                数据备份
+                <span class="badge badge-primary">支持全量 / 增量</span>
+            </div>
+            <div class="card-body" style="display:none;">
+                <div class="form-row">
+                    <div class="form-group" style="flex:2;">
+                        <label>选择数据库实例信息</label>
+                        <select id="backup-plan-select">
+                            <option value="">-- 请选择或手动填写下方信息 --</option>
+                        </select>
+                    </div>
+                </div>
                 <div class="form-row">
                     <div class="form-group" style="width:100%;">
                         <label>备份类型</label>
@@ -312,6 +440,7 @@
                                     </select>
                                 </div>
                             </div>
+                            <p style="color:#8c959f;font-size:0.8rem;margin:4px 0 0 0;">提示：增量备份会从所选全量备份文件中自动读取起始 binlog 位点。</p>
                             <p style="color:#8c959f;font-size:0.8rem;margin:4px 0 0 0;">起始位点：若该全量下已有增量，则从<strong>最后一个增量的结束位点</strong>开始，否则从全量 <code>meta/tables-binlog.json</code> 读取。</p>
                             <p style="color:#8c959f;font-size:0.8rem;margin:4px 0 0 0;">表过滤条件与全量备份一致，由所选全量备份的 <code>meta/backup-options.json</code> 决定，不可自定义。</p>
                         </div>
@@ -354,6 +483,12 @@
                         <label>清理旧备份（天）（0=不清理）</label>
                         <input type="number" id="backup-clean" value="0" min="0" placeholder="0=不清理">
                     </div>
+                    <div class="form-group" style="display:flex;align-items:flex-end;gap:6px;">
+                        <label style="margin-bottom:0;">
+                            <input type="checkbox" id="backup-gzip" checked>
+                            启用 gzip 压缩
+                        </label>
+                    </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group actions">
@@ -361,16 +496,21 @@
                         <button class="btn" id="btn-backup" onclick="doBackup()">执行备份</button>
                     </div>
                 </div>
-                <p style="color:#8c959f;font-size:0.8rem;margin-top:4px;">
-                    提示：增量备份会从所选全量备份的 meta 中自动读取起始 binlog 位点，无需手动填写。
-                </p>
             </div>
         </div>
 
         <!-- 数据还原 -->
         <div class="card">
             <div class="card-header collapsible-header">数据还原</div>
-            <div class="card-body">
+            <div class="card-body" style="display:none;">
+                <div class="form-row">
+                    <div class="form-group" style="flex:2;">
+                        <label>选择数据库实例信息</label>
+                        <select id="restore-plan-select">
+                            <option value="">-- 请选择或手动填写下方目标连接信息 --</option>
+                        </select>
+                    </div>
+                </div>
                 <div class="form-row">
                     <div class="form-group" style="flex:2;">
                         <label>选择全量备份目录 *</label>
@@ -441,7 +581,7 @@
                 <span>备份列表</span>
                 <span>
                     <input type="text" id="filter-db" placeholder="按数据库名筛选" style="padding:6px 10px;margin-left:12px;width:140px;">
-                    <button class="btn btn-secondary" onclick="loadBackups()" style="margin-left:8px;">刷新</button>
+                    <button class="btn btn-secondary btn-sm" onclick="loadBackups()" style="margin-left:8px;">刷新</button>
                 </span>
             </div>
             <div class="card-body">
@@ -486,6 +626,54 @@
                 </div>
             </div>
         </div>
+        <!-- 数据库实例信息编辑/新增弹窗 -->
+        <div id="plan-modal" class="modal-overlay" style="display:none;">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3 id="plan-modal-title">数据库实例信息</h3>
+                    <button class="btn btn-secondary btn-sm" onclick="closePlanModal()">关闭</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-row">
+                        <div class="form-group" style="flex:2;">
+                            <label>实例名称 *</label>
+                            <input type="text" id="plan-name">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>数据库主机 *</label>
+                            <input type="text" id="plan-host" placeholder="127.0.0.1">
+                        </div>
+                        <div class="form-group" style="min-width:80px;">
+                            <label>端口 *</label>
+                            <input type="number" id="plan-port" value="3306">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>用户名 *</label>
+                            <input type="text" id="plan-user" value="root">
+                        </div>
+                        <div class="form-group">
+                            <label>密码 *</label>
+                            <input type="password" id="plan-password">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="flex:2;">
+                            <label>数据库名 *</label>
+                            <input type="text" id="plan-database" placeholder="db name">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group actions">
+                            <button class="btn btn-secondary btn-sm" onclick="submitPlanModal()">保存</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
         <!-- 增量备份列表弹窗 -->
         <div id="incr-modal" class="modal-overlay" style="display:none;">
             <div class="modal">
@@ -498,28 +686,112 @@
                 </div>
             </div>
         </div>
+        <!-- 任务调度新增/编辑弹窗 -->
+        <div id="job-modal" class="modal-overlay" style="display:none;">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3 id="job-modal-title">新增调度任务</h3>
+                    <button class="btn btn-secondary btn-sm" onclick="closeJobModal()">关闭</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-row">
+                        <div class="form-group" style="flex:2;">
+                            <label>数据库实例信息 *</label>
+                            <select id="job-plan-select">
+                                <option value="">-- 请选择数据库实例 --</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>备份类型 *</label>
+                            <select id="job-backup-type">
+                                <option value="full">全量备份</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="job-plan-info-wrap" class="form-row" style="display:none;">
+                        <div class="form-group" style="flex:1;">
+                            <label style="margin-bottom:4px;">当前实例信息</label>
+                            <div id="job-plan-info" class="job-plan-info-box"></div>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="flex:2;">
+                            <label>调度任务名称 *</label>
+                            <input type="text" id="job-name" placeholder="例如 每天凌晨 1 点全量备份 mall">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="flex:2;">
+                            <label>调度策略（cron 表达式） *</label>
+                            <input type="text" id="job-cron" placeholder="如 0 1 * * * 表示每天 1 点执行">
+                            <small id="job-cron-preview" style="display:block;margin-top:4px;font-size:0.8rem;color:#8c959f;"></small>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="flex:2;">
+                            <label>仅备份指定表</label>
+                            <input type="text" id="job-tables" placeholder="如 user,order 多个表用逗号分隔，留空=全部">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="flex:2;">
+                            <label>不备份的表</label>
+                            <input type="text" id="job-ignore" placeholder="如 order_log 多个表用逗号分隔，留空=无">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="min-width: 80px; max-width: 180px;">
+                            <label>清理旧备份（天）（0=不清理）</label>
+                            <input type="number" id="job-clean" value="0" min="0" placeholder="0=不清理">
+                        </div>
+                        <div class="form-group" style="display:flex;align-items:flex-end;gap:6px;">
+                            <label style="margin-bottom:0;">
+                                <input type="checkbox" id="job-gzip">
+                                启用 gzip 压缩
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group actions">
+                            <button class="btn btn-secondary btn-sm" onclick="submitJobModal()">保存</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
-        const API = '';
-
         // 卡片折叠：点击卡片头部可展开/收起对应 body
         function initCollapsibleCards() {
             document.querySelectorAll('.card-header.collapsible-header').forEach(header => {
                 const body = header.nextElementSibling;
                 if (!body || !body.classList.contains('card-body')) return;
                 let icon = header.querySelector('.card-toggle-icon');
+                let label = header.querySelector('.card-toggle-label');
                 if (!icon) {
                     icon = document.createElement('span');
                     icon.className = 'card-toggle-icon';
-                    icon.textContent = '−';
+                    const initiallyHidden = body.style.display === 'none';
+                    icon.textContent = initiallyHidden ? '+' : '−';
                     header.appendChild(icon);
+                }
+                if (!label) {
+                    label = document.createElement('span');
+                    label.className = 'card-toggle-label';
+                    label.style.marginLeft = '4px';
+                    label.style.fontSize = '0.8rem';
+                    label.style.color = '#57606a';
+                    const initiallyHidden = body.style.display === 'none';
+                    label.textContent = initiallyHidden ? '展开' : '折叠';
+                    header.appendChild(label);
                 }
                 header.addEventListener('click', (e) => {
                     if (e.target.closest('button, input, select, a, label')) return;
                     const hidden = body.style.display === 'none';
                     body.style.display = hidden ? '' : 'none';
                     icon.textContent = hidden ? '−' : '+';
+                    if (label) label.textContent = hidden ? '折叠' : '展开';
                 });
             });
         }
@@ -536,6 +808,92 @@
             if (bytes < 1024) return bytes + ' B';
             if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
             return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+        }
+
+        function parseCronField(field, min, max) {
+            const values = new Set();
+            if (field === '*') {
+                for (let i = min; i <= max; i++) values.add(i);
+                return values;
+            }
+            const parts = field.split(',');
+            for (const part of parts) {
+                if (!part) continue;
+                // 支持 */n、a/b、a-b/c 这几种常见写法
+                const stepMatch = part.match(/^(\*|\d+)(?:\/(\d+))?$/);
+                if (stepMatch) {
+                    const startRaw = stepMatch[1];
+                    const stepRaw = stepMatch[2];
+                    const start = startRaw === '*' ? min : parseInt(startRaw, 10);
+                    const step = stepRaw ? parseInt(stepRaw, 10) : null;
+                    if (!isNaN(start) && start >= min && start <= max) {
+                        if (step && step > 0) {
+                            for (let i = start; i <= max; i += step) values.add(i);
+                        } else {
+                            values.add(start);
+                        }
+                    }
+                    continue;
+                }
+                const rangeMatch = part.match(/^(\d+)-(\d+)(?:\/(\d+))?$/);
+                if (rangeMatch) {
+                    let start = parseInt(rangeMatch[1], 10);
+                    let end = parseInt(rangeMatch[2], 10);
+                    const step = rangeMatch[3] ? parseInt(rangeMatch[3], 10) : 1;
+                    if (!isNaN(start) && !isNaN(end) && step > 0) {
+                        start = Math.max(min, start);
+                        end = Math.min(max, end);
+                        for (let i = start; i <= end; i += step) values.add(i);
+                    }
+                    continue;
+                }
+                const v = parseInt(part, 10);
+                if (!isNaN(v) && v >= min && v <= max) values.add(v);
+            }
+            return values;
+        }
+
+        function computeNextCronRuns(expr, count) {
+            const parts = expr.trim().split(/\s+/);
+            if (parts.length !== 5) return null;
+            // 标准 cron：分 时 日 月 周
+            const [minF, hourF, domF, monthF, dowF] = parts;
+            const minutes = parseCronField(minF, 0, 59);
+            const hours = parseCronField(hourF, 0, 23);
+            const doms = domF === '*' ? null : parseCronField(domF, 1, 31);
+            const months = monthF === '*' ? null : parseCronField(monthF, 1, 12);
+            const dows = dowF === '*' ? null : parseCronField(dowF, 0, 6);
+
+            if (!minutes.size || !hours.size) return null;
+
+            const results = [];
+            let dt = new Date();
+            dt.setSeconds(0, 0);
+            dt = new Date(dt.getTime() + 60 * 1000); // 从下一分钟开始
+            let steps = 0;
+            // 最多向后扫描约两年的分钟数，避免月度/年度任务被过早截断
+            const MAX_STEPS = 2 * 365 * 24 * 60;
+
+            while (results.length < count && steps < MAX_STEPS) {
+                const minute = dt.getMinutes();
+                const hour = dt.getHours();
+                const dom = dt.getDate();
+                const month = dt.getMonth() + 1;
+                const dow = dt.getDay(); // 0=周日
+
+                const monthOk = !months || months.has(month);
+                const domOk = !doms || doms.has(dom);
+                const dowOk = !dows || dows.has(dow);
+
+                if (minutes.has(minute) && hours.has(hour) && monthOk && domOk && dowOk) {
+                    results.push(new Date(dt.getTime()));
+                }
+
+                dt = new Date(dt.getTime() + 60 * 1000);
+                steps++;
+            }
+
+            return results;
         }
 
         async function loadBackups() {
@@ -628,6 +986,41 @@
             }
         }
 
+        // 供执行备份 / 保存调度任务 / 保存实例信息前共用的连接校验
+        async function ensureBackupConnectionOK() {
+            const host = document.getElementById('backup-host').value.trim();
+            const user = document.getElementById('backup-user').value.trim();
+            const password = document.getElementById('backup-password').value;
+            const database = document.getElementById('backup-database').value.trim();
+            if (!host || !user || !database) {
+                toast('请填写主机、用户名、数据库名', 'error');
+                return false;
+            }
+            try {
+                const r = await fetch('/db/test-connection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        host,
+                        port: document.getElementById('backup-port').value || '3306',
+                        user,
+                        password,
+                        database
+                    })
+                });
+                const j = await r.json();
+                if (j.code === 200) {
+                    return true;
+                } else {
+                    toast(j.msg || '连接失败', 'error');
+                    return false;
+                }
+            } catch (e) {
+                toast('测试连接失败: ' + e.message, 'error');
+                return false;
+            }
+        }
+
         async function testConnectionRestore() {
             const host = document.getElementById('restore-host').value.trim();
             const user = document.getElementById('restore-user').value.trim();
@@ -665,6 +1058,41 @@
             }
         }
 
+        // 供执行还原前共用的连接校验
+        async function ensureRestoreConnectionOK() {
+            const host = document.getElementById('restore-host').value.trim();
+            const user = document.getElementById('restore-user').value.trim();
+            const password = document.getElementById('restore-password').value;
+            const database = document.getElementById('restore-target-db').value.trim();
+            if (!host || !user || !database) {
+                toast('请填写主机、用户名和目标数据库名', 'error');
+                return false;
+            }
+            try {
+                const r = await fetch('/db/test-connection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        host,
+                        port: document.getElementById('restore-port').value || '3306',
+                        user,
+                        password,
+                        database
+                    })
+                });
+                const j = await r.json();
+                if (j.code === 200) {
+                    return true;
+                } else {
+                    toast(j.msg || '连接失败', 'error');
+                    return false;
+                }
+            } catch (e) {
+                toast('测试连接失败: ' + e.message, 'error');
+                return false;
+            }
+        }
+
         async function doBackup() {
             const host = document.getElementById('backup-host').value.trim();
             const user = document.getElementById('backup-user').value.trim();
@@ -675,6 +1103,8 @@
                 toast('请填写主机、用户名、密码、数据库名', 'error');
                 return;
             }
+            const okConn = await ensureBackupConnectionOK();
+            if (!okConn) return;
             const btn = document.getElementById('btn-backup');
             btn.disabled = true;
             btn.textContent = backupType === 'incremental' ? '增量备份中...' : '备份中...';
@@ -690,8 +1120,10 @@
                     };
                     const tables = document.getElementById('backup-tables').value.trim();
                     const ignore = document.getElementById('backup-ignore').value.trim();
+                    const gzipCheckbox = document.getElementById('backup-gzip');
                     if (tables) body.tables = tables;
                     if (ignore) body.ignore_tables = ignore;
+                    if (gzipCheckbox && gzipCheckbox.checked) body.enable_gzip = true;
 
                     const r = await fetch('/db/backup', {
                         method: 'POST',
@@ -738,6 +1170,720 @@
             } finally {
                 btn.disabled = false;
                 btn.textContent = '执行备份';
+            }
+        }
+
+        // 保存当前“数据备份”表单中的连接信息与备份参数为一个备份计划
+        async function saveBackupPlan() {
+            const host = document.getElementById('backup-host').value.trim();
+            const user = document.getElementById('backup-user').value.trim();
+            const password = document.getElementById('backup-password').value;
+            const database = document.getElementById('backup-database').value.trim();
+            if (!host || !user || !database) {
+                toast('请先填写主机、用户名、数据库名，再保存实例信息', 'error');
+                return;
+            }
+            const okConn = await ensureBackupConnectionOK();
+            if (!okConn) return;
+            const clean = parseInt(document.getElementById('backup-clean').value) || 0;
+            const gzipCheckbox = document.getElementById('backup-gzip');
+            const tables = document.getElementById('backup-tables').value.trim();
+            const ignore = document.getElementById('backup-ignore').value.trim();
+            const planSelect = document.getElementById('backup-plan-select');
+            const selectedPlanId = planSelect && planSelect.value ? planSelect.value.trim() : '';
+            const isUpdate = selectedPlanId.length > 0;
+            const body = {
+                name: null,
+                host,
+                port: document.getElementById('backup-port').value || '3306',
+                user,
+                database,
+                backup_dir: '/data/backup/mysql',
+                tables: tables || '',
+                ignore_tables: ignore || '',
+                clean_days: clean,
+                enable_gzip: !!(gzipCheckbox && gzipCheckbox.checked),
+                mode: 'full_only'
+            };
+            if (isUpdate) {
+                const plan = (window._backupPlansCache || []).find(p => p.id === selectedPlanId);
+                if (plan) body.name = plan.name || '';
+                if (password !== '') body.password = password;
+            } else {
+                const name = prompt('请输入此数据库实例配置的名称（例如 mall-prod 或 mall-test）：', database || '');
+                if (!name) return;
+                body.name = name;
+                body.password = password;
+            }
+            const btn = document.getElementById('btn-save-plan');
+            btn.disabled = true;
+            btn.textContent = '保存中...';
+            try {
+                const url = isUpdate ? ('/backup-plans/' + encodeURIComponent(selectedPlanId)) : '/backup-plans';
+                const method = isUpdate ? 'PUT' : 'POST';
+                const r = await fetch(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const j = await r.json();
+                if (j.code === 200) {
+                    toast('保存实例信息成功');
+                    loadBackupPlans();
+                } else {
+                    toast('保存失败: ' + (j.msg || ''), 'error');
+                }
+            } catch (e) {
+                toast('请求失败: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '保存实例信息';
+            }
+        }
+
+        async function loadScheduledTasks() {
+            const tbody = document.getElementById('scheduled-tasks-tbody');
+            const empty = document.getElementById('scheduled-tasks-empty');
+            if (!tbody || !empty) return;
+            tbody.innerHTML = '';
+            empty.style.display = 'none';
+            try {
+                const r = await fetch('/scheduled-tasks');
+                const j = await r.json().catch(() => ({}));
+                const items = (r.ok && j.code === 200 && j.data && (j.data.items || [])) || [];
+                const esc = s => ('' + (s ?? '')).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+                items.forEach(it => {
+                    const tr = document.createElement('tr');
+                    const enabled = it.enabled !== false;
+                    const nextRuns = enabled && it.cron_expr ? computeNextCronRuns(it.cron_expr, 1) : null;
+                    const nextText = nextRuns && nextRuns.length ? (function(d){ const pad=n=>n<10?'0'+n:''+n; return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes()); })(nextRuns[0]) : '-';
+                    const statusText = enabled ? '运行' : '停止';
+                    const runBtn = !enabled ? '<button class="btn btn-secondary btn-sm btn-job-run" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">运行</button> ' : '';
+                    const stopBtn = enabled ? '<button class="btn btn-secondary btn-sm btn-job-stop" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">停止</button> ' : '';
+                    const delBtn = !enabled ? '<button class="btn btn-danger btn-sm btn-job-del" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">删除</button>' : '';
+                    const editBtn = !enabled ? '<button class="btn btn-secondary btn-sm btn-job-edit" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">编辑</button> ' : '';
+                    const logBtn = '<button class="btn btn-secondary btn-sm btn-job-log" data-job-id="' + esc(it.id || '') + '">日志</button> ';
+                    tr.innerHTML =
+                        '<td class="col-name">' + esc(it.name || '') + '</td>' +
+                        '<td class="col-plan-name">' + esc(it.plan_name || '') + '</td>' +
+                        '<td class="col-type">' + (it.backup_type === 'incremental' ? '增量' : '全量') + '</td>' +
+                        '<td class="col-cron">' + esc(it.cron_expr || it.schedule || '') + '</td>' +
+                        '<td class="col-last">' + esc(it.last_run_at || '-') + '</td>' +
+                        '<td class="col-next">' + esc(nextText) + '</td>' +
+                        '<td class="col-status">' + statusText + '</td>' +
+                        '<td class="col-actions">' +
+                            editBtn + logBtn + runBtn + stopBtn + delBtn +
+                        '</td>';
+                    tbody.appendChild(tr);
+                });
+                // 绑定操作按钮事件
+                tbody.querySelectorAll('.btn-job-edit').forEach(btn => {
+                    btn.onclick = () => {
+                        const planId = btn.dataset.planId;
+                        const jobId = btn.dataset.jobId;
+                        const item = items.find(x => x.id === jobId && x.plan_id === planId);
+                        if (!item) return;
+                        openJobModal(item);
+                    };
+                });
+                tbody.querySelectorAll('.btn-job-run').forEach(btn => {
+                    btn.onclick = () => {
+                        const planId = btn.dataset.planId;
+                        const jobId = btn.dataset.jobId;
+                        updateJob(planId, jobId, { enabled: true });
+                    };
+                });
+                tbody.querySelectorAll('.btn-job-stop').forEach(btn => {
+                    btn.onclick = () => {
+                        const planId = btn.dataset.planId;
+                        const jobId = btn.dataset.jobId;
+                        updateJob(planId, jobId, { enabled: false });
+                    };
+                });
+                tbody.querySelectorAll('.btn-job-del').forEach(btn => {
+                    btn.onclick = () => {
+                        const planId = btn.dataset.planId;
+                        const jobId = btn.dataset.jobId;
+                        if (!confirm('确定要删除该定时任务吗？')) return;
+                        deleteJob(planId, jobId);
+                    };
+                });
+                tbody.querySelectorAll('.btn-job-log').forEach(btn => {
+                    btn.onclick = () => {
+                        const jobId = btn.dataset.jobId;
+                        if (jobId) showJobLog(jobId);
+                    };
+                });
+                if (items.length === 0) empty.style.display = 'block';
+            } catch (e) {
+                empty.style.display = 'block';
+            }
+        }
+
+        async function updateJob(planId, jobId, payload) {
+            try {
+                const r = await fetch('/backup-plans/' + encodeURIComponent(planId) + '/jobs/' + encodeURIComponent(jobId), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload || {})
+                });
+                const j = await r.json().catch(() => ({}));
+                if (j.code === 200) {
+                    toast('定时任务已更新');
+                    loadScheduledTasks();
+                } else {
+                    toast('更新定时任务失败: ' + (j.msg || ''), 'error');
+                }
+            } catch (e) {
+                toast('更新定时任务失败: ' + e.message, 'error');
+            }
+        }
+
+        async function deleteJob(planId, jobId) {
+            try {
+                const r = await fetch('/backup-plans/' + encodeURIComponent(planId) + '/jobs/' + encodeURIComponent(jobId), {
+                    method: 'DELETE'
+                });
+                const j = await r.json().catch(() => ({}));
+                if (j.code === 200) {
+                    toast('定时任务已删除');
+                    loadScheduledTasks();
+                } else {
+                    toast('删除定时任务失败: ' + (j.msg || ''), 'error');
+                }
+            } catch (e) {
+                toast('删除定时任务失败: ' + e.message, 'error');
+            }
+        }
+
+        function openPlanModal(id) {
+            const modal = document.getElementById('plan-modal');
+            const title = document.getElementById('plan-modal-title');
+            const nameEl = document.getElementById('plan-name');
+            const hostEl = document.getElementById('plan-host');
+            const portEl = document.getElementById('plan-port');
+            const userEl = document.getElementById('plan-user');
+            const passEl = document.getElementById('plan-password');
+            const dbEl = document.getElementById('plan-database');
+            _editingPlanId = id || null;
+            if (_editingPlanId) {
+                const plan = (window._backupPlansCache || []).find(p => p.id === _editingPlanId);
+                if (!plan) {
+                    toast('未找到对应的数据库实例信息', 'error');
+                    return;
+                }
+                title.textContent = '编辑数据库实例信息';
+                nameEl.value = plan.name || '';
+                hostEl.value = plan.host || '';
+                portEl.value = plan.port != null ? plan.port : 3306;
+                userEl.value = plan.user || '';
+                passEl.value = ''; // 为安全起见不回显密码，需重新填写
+                dbEl.value = plan.database || '';
+            } else {
+                title.textContent = '新增数据库实例信息';
+                nameEl.value = '';
+                hostEl.value = '';
+                portEl.value = 3306;
+                userEl.value = 'root';
+                passEl.value = '';
+                dbEl.value = '';
+            }
+            modal.style.display = 'flex';
+        }
+
+        function closePlanModal() {
+            const modal = document.getElementById('plan-modal');
+            modal.style.display = 'none';
+        }
+
+        async function testPlanConnection(id, payload) {
+            let plan = null;
+            if (id && !payload) {
+                try {
+                    const r = await fetch('/backup-plans/' + encodeURIComponent(id));
+                    const j = await r.json().catch(() => ({}));
+                    if (r.ok && j.code === 200 && j.data) plan = j.data;
+                    else plan = (window._backupPlansCache || []).find(p => p.id === id);
+                } catch (e) {
+                    plan = (window._backupPlansCache || []).find(p => p.id === id);
+                }
+            } else if (id) {
+                plan = (window._backupPlansCache || []).find(p => p.id === id);
+            }
+            const host = payload?.host ?? plan?.host ?? '';
+            const port = payload?.port ?? plan?.port ?? 3306;
+            const user = payload?.user ?? plan?.user ?? '';
+            const password = payload?.password ?? plan?.password ?? '';
+            const database = payload?.database ?? plan?.database ?? '';
+            if (!host || !user || !database) {
+                toast('请填写主机、用户名、数据库名', 'error');
+                return false;
+            }
+            if (!password && id) {
+                toast('无法获取该实例的密码，请尝试在编辑中重新保存密码后再测试连接', 'error');
+                return false;
+            }
+            try {
+                const r = await fetch('/db/test-connection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        host,
+                        port,
+                        user,
+                        password,
+                        database
+                    })
+                });
+                const j = await r.json();
+                if (j.code === 200) {
+                    toast('连接成功');
+                    return true;
+                } else {
+                    toast(j.msg || '连接失败', 'error');
+                    return false;
+                }
+            } catch (e) {
+                toast('测试连接失败: ' + e.message, 'error');
+                return false;
+            }
+        }
+
+        async function submitPlanModal() {
+            const nameEl = document.getElementById('plan-name');
+            const hostEl = document.getElementById('plan-host');
+            const portEl = document.getElementById('plan-port');
+            const userEl = document.getElementById('plan-user');
+            const passEl = document.getElementById('plan-password');
+            const dbEl = document.getElementById('plan-database');
+            const name = nameEl.value.trim();
+            const host = hostEl.value.trim();
+            const port = portEl.value || '3306';
+            const user = userEl.value.trim();
+            const password = passEl.value;
+            const database = dbEl.value.trim();
+            if (!name || !host || !user || !database) {
+                toast('请完整填写实例名称、主机、用户名、数据库名', 'error');
+                return;
+            }
+            const ok = await testPlanConnection(null, { host, port, user, password, database });
+            if (!ok) return;
+            const body = {
+                name,
+                host,
+                port,
+                user,
+                password,
+                database
+            };
+            const btn = document.querySelector('#plan-modal .btn.btn-secondary.btn-sm');
+            try {
+                const url = _editingPlanId ? ('/backup-plans/' + encodeURIComponent(_editingPlanId)) : '/backup-plans';
+                const method = _editingPlanId ? 'PUT' : 'POST';
+                const r = await fetch(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const j = await r.json();
+                if (j.code === 200) {
+                    toast(_editingPlanId ? '实例信息已更新' : '实例信息已创建');
+                    closePlanModal();
+                    loadBackupPlans();
+                } else {
+                    toast('保存实例信息失败: ' + (j.msg || ''), 'error');
+                }
+            } catch (e) {
+                toast('保存实例信息失败: ' + e.message, 'error');
+            }
+        }
+
+        let _editingPlanId = null;
+        let _editingJobPlanId = null;
+        let _editingJobId = null;
+
+        async function openJobModal(job) {
+            const modal = document.getElementById('job-modal');
+            const title = document.getElementById('job-modal-title');
+            const planSel = document.getElementById('job-plan-select');
+            const nameEl = document.getElementById('job-name');
+            const cronEl = document.getElementById('job-cron');
+            const typeEl = document.getElementById('job-backup-type');
+            const gzipEl = document.getElementById('job-gzip');
+            const tablesEl = document.getElementById('job-tables');
+            const ignoreEl = document.getElementById('job-ignore');
+            const cleanEl = document.getElementById('job-clean');
+
+            // 重建实例下拉
+            planSel.innerHTML = '<option value="">-- 请选择数据库实例 --</option>';
+            (window._backupPlansCache || []).forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id || '';
+                opt.textContent = (p.name || p.id || '未命名') + (p.database ? ' (' + p.database + ')' : '');
+                planSel.appendChild(opt);
+            });
+
+            if (job && job.plan_id && job.id) {
+                _editingJobPlanId = job.plan_id;
+                _editingJobId = job.id;
+                title.textContent = '编辑调度任务';
+                planSel.value = job.plan_id || '';
+                nameEl.value = job.name || '';
+                cronEl.value = job.cron_expr || job.schedule || '';
+                typeEl.value = job.backup_type || 'full';
+                gzipEl.checked = !!job.enable_gzip;
+                tablesEl.value = job.tables || '';
+                ignoreEl.value = job.ignore_tables || '';
+                cleanEl.value = job.clean_days != null ? job.clean_days : 0;
+                // 列表接口未返回 tables/ignore_tables，从该实例下获取完整 job 回填
+                try {
+                    const r = await fetch('/backup-plans/' + encodeURIComponent(job.plan_id));
+                    const j = await r.json().catch(() => ({}));
+                    if (r.ok && j.code === 200 && j.data && Array.isArray(j.data.jobs)) {
+                        const fullJob = j.data.jobs.find(ji => (ji.id || '') === (job.id || ''));
+                        if (fullJob) {
+                            tablesEl.value = fullJob.tables || '';
+                            ignoreEl.value = fullJob.ignore_tables || '';
+                        }
+                    }
+                } catch (e) { /* 保留已填写的空值 */ }
+            } else {
+                _editingJobPlanId = null;
+                _editingJobId = null;
+                title.textContent = '新增调度任务';
+                planSel.value = '';
+                nameEl.value = '';
+                cronEl.value = '';
+                typeEl.value = 'full';
+                gzipEl.checked = true;
+                tablesEl.value = '';
+                ignoreEl.value = '';
+                cleanEl.value = 0;
+            }
+            refreshJobPlanInfo(planSel.value || null);
+            modal.style.display = 'flex';
+        }
+
+        async function refreshJobPlanInfo(planId) {
+            const wrap = document.getElementById('job-plan-info-wrap');
+            const infoEl = document.getElementById('job-plan-info');
+            if (!wrap || !infoEl) return;
+            if (!planId || !planId.trim()) {
+                wrap.style.display = 'none';
+                infoEl.textContent = '';
+                return;
+            }
+            wrap.style.display = 'flex';
+            infoEl.textContent = '加载中...';
+            const escHtml = s => ('' + (s ?? '')).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            function renderPlanTable(p) {
+                const name = escHtml(p.name || '');
+                const host = escHtml(p.host || '');
+                const port = escHtml((p.port != null && p.port !== '') ? String(p.port) : '');
+                const user = escHtml(p.user || '');
+                const database = escHtml(p.database || '');
+                const backupDir = escHtml(p.backup_dir || '/data/backup/mysql');
+                return '<table class="job-plan-info-table">' +
+                    '<tr><th>实例名称</th><td>' + name + '</td><th>主机</th><td>' + host + '</td><th>端口</th><td>' + port + '</td></tr>' +
+                    '<tr><th>用户名</th><td>' + user + '</td><th>数据库</th><td>' + database + '</td><th>备份目录</th><td>' + backupDir + '</td></tr>' +
+                    '</table>';
+            }
+            try {
+                const r = await fetch('/backup-plans/' + encodeURIComponent(planId));
+                const j = await r.json().catch(() => ({}));
+                if (r.ok && j.code === 200 && j.data) {
+                    infoEl.innerHTML = renderPlanTable(j.data);
+                } else {
+                    const fromCache = (window._backupPlansCache || []).find(x => (x.id || '') === planId);
+                    if (fromCache) {
+                        const p = { ...fromCache, backup_dir: fromCache.backup_dir || '/data/backup/mysql' };
+                        infoEl.innerHTML = renderPlanTable(p);
+                    } else {
+                        infoEl.textContent = '无法加载实例信息';
+                    }
+                }
+            } catch (e) {
+                infoEl.textContent = '加载失败: ' + e.message;
+            }
+        }
+
+        function closeJobModal() {
+            const modal = document.getElementById('job-modal');
+            modal.style.display = 'none';
+        }
+
+        async function submitJobModal() {
+            const planSel = document.getElementById('job-plan-select');
+            const nameEl = document.getElementById('job-name');
+            const cronEl = document.getElementById('job-cron');
+            const typeEl = document.getElementById('job-backup-type');
+            const gzipEl = document.getElementById('job-gzip');
+            const tablesEl = document.getElementById('job-tables');
+            const ignoreEl = document.getElementById('job-ignore');
+            const cleanEl = document.getElementById('job-clean');
+
+            const planId = planSel.value.trim();
+            const name = nameEl.value.trim();
+            const schedule = cronEl.value.trim();
+            const backupType = typeEl.value || 'full';
+            const tables = tablesEl.value.trim();
+            const ignore = ignoreEl.value.trim();
+            const cleanDays = parseInt(cleanEl.value, 10) || 0;
+            const enableGzip = !!gzipEl.checked;
+
+            if (!planId || !name || !schedule) {
+                toast('请完整选择数据库实例并填写调度任务名称和调度策略', 'error');
+                return;
+            }
+
+            // 预先校验 cron 表达式，沿用备份模块的计算逻辑
+            const runs = computeNextCronRuns(schedule, 5);
+            const jobPreview = document.getElementById('job-cron-preview');
+            if (!runs || !runs.length) {
+                if (jobPreview) {
+                    jobPreview.textContent = 'cron 表达式无效，请检查格式（例如 0 0 12 * * 表示每天 12:00 执行）。';
+                }
+                toast('cron 表达式无效，请检查后再保存。', 'error');
+                return;
+            }
+            if (jobPreview) {
+                const fmt = d => {
+                    const pad = n => (n < 10 ? '0' + n : '' + n);
+                    const y = d.getFullYear();
+                    const m = pad(d.getMonth() + 1);
+                    const day = pad(d.getDate());
+                    const h = pad(d.getHours());
+                    const mi = pad(d.getMinutes());
+                    return `${y}-${m}-${day} ${h}:${mi}`;
+                };
+                jobPreview.textContent = '最近 5 次预计运行时间：' + runs.map(fmt).join('， ');
+            }
+
+            const body = {
+                name,
+                schedule,
+                backup_type: backupType,
+                tables: tables || '',
+                ignore_tables: ignore || '',
+                clean_days: cleanDays,
+                enable_gzip: enableGzip
+            };
+
+            // 新增的调度任务默认状态为“停止”；编辑时若切换到其他实例，新任务也设为停止
+            if (!_editingJobId || planId !== _editingJobPlanId) {
+                body.enabled = false;
+            }
+
+            try {
+                let url, method;
+                const editingSamePlan = _editingJobId && planId === _editingJobPlanId;
+                if (editingSamePlan) {
+                    url = '/backup-plans/' + encodeURIComponent(planId) + '/jobs/' + encodeURIComponent(_editingJobId);
+                    method = 'PUT';
+                } else if (_editingJobId && planId !== _editingJobPlanId) {
+                    // 编辑时切换了实例：在新实例下创建任务，再删除原实例下的旧任务
+                    url = '/backup-plans/' + encodeURIComponent(planId) + '/jobs';
+                    method = 'POST';
+                } else {
+                    url = '/backup-plans/' + encodeURIComponent(planId) + '/jobs';
+                    method = 'POST';
+                }
+                const r = await fetch(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const j = await r.json().catch(() => ({}));
+                if (j.code === 200) {
+                    if (_editingJobId && planId !== _editingJobPlanId) {
+                        const delR = await fetch('/backup-plans/' + encodeURIComponent(_editingJobPlanId) + '/jobs/' + encodeURIComponent(_editingJobId), { method: 'DELETE' });
+                        const delJ = await delR.json().catch(() => ({}));
+                        if (delJ.code !== 200) {
+                            toast('已在新实例下创建任务，但删除原实例下的旧任务失败: ' + (delJ.msg || ''), 'error');
+                        } else {
+                            toast('已切换实例并更新任务（新任务状态：停止）');
+                        }
+                    } else {
+                        toast(_editingJobId ? '调度任务已更新' : '调度任务已创建（状态：停止）');
+                    }
+                    closeJobModal();
+                    loadScheduledTasks();
+                } else {
+                    toast('保存调度任务失败: ' + (j.msg || ''), 'error');
+                }
+            } catch (e) {
+                toast('保存调度任务失败: ' + e.message, 'error');
+            }
+        }
+
+        // showJobLog 保留备用，如后续需要从任务调度中查看单个任务日志可复用
+        async function showJobLog(jobId) {
+            const modal = document.getElementById('log-modal');
+            const title = document.getElementById('log-modal-title');
+            const content = document.getElementById('log-content');
+            title.textContent = '定时任务 ' + jobId + ' - 运行日志';
+            modal.style.display = 'flex';
+            content.textContent = '加载中...';
+            try {
+                const r = await fetch('/scheduled-tasks/' + encodeURIComponent(jobId) + '/log');
+                const j = await r.json();
+                if (j.code === 200 && j.data) {
+                    content.textContent = j.data.content || '(空)';
+                    content.scrollTop = content.scrollHeight;
+                } else {
+                    content.textContent = '加载失败: ' + (j.msg || '未知错误');
+                }
+            } catch (e) {
+                content.textContent = '请求失败: ' + e.message;
+            }
+        }
+
+        window._backupPlansCache = [];
+
+        function fillBackupFormFromPlan(plan) {
+            if (!plan) return;
+            const hostEl = document.getElementById('backup-host');
+            const portEl = document.getElementById('backup-port');
+            const userEl = document.getElementById('backup-user');
+            const passEl = document.getElementById('backup-password');
+            const dbEl = document.getElementById('backup-database');
+            const tablesEl = document.getElementById('backup-tables');
+            const ignoreEl = document.getElementById('backup-ignore');
+            const cleanEl = document.getElementById('backup-clean');
+            const gzipEl = document.getElementById('backup-gzip');
+            if (hostEl) hostEl.value = plan.host || '';
+            if (portEl) portEl.value = plan.port != null ? plan.port : '3306';
+            if (userEl) userEl.value = plan.user || '';
+            if (passEl) passEl.value = plan.password || '';
+            if (dbEl) dbEl.value = plan.database || '';
+            if (tablesEl) tablesEl.value = plan.tables || '';
+            if (ignoreEl) ignoreEl.value = plan.ignore_tables || '';
+            if (cleanEl) cleanEl.value = plan.clean_days != null ? plan.clean_days : 0;
+            if (gzipEl) gzipEl.checked = true;
+        }
+
+        function fillRestoreFormFromPlan(plan) {
+            if (!plan) return;
+            const hostEl = document.getElementById('restore-host');
+            const portEl = document.getElementById('restore-port');
+            const userEl = document.getElementById('restore-user');
+            const passEl = document.getElementById('restore-password');
+            const targetDbEl = document.getElementById('restore-target-db');
+            if (hostEl) hostEl.value = plan.host || '';
+            if (portEl) portEl.value = plan.port != null ? plan.port : '3306';
+            if (userEl) userEl.value = plan.user || '';
+            if (passEl) passEl.value = plan.password || '';
+            if (targetDbEl) targetDbEl.value = plan.database || '';
+        }
+
+        async function loadBackupPlans() {
+            const tbody = document.getElementById('plans-tbody');
+            const empty = document.getElementById('plans-empty');
+            const planSelect = document.getElementById('backup-plan-select');
+            const restorePlanSelect = document.getElementById('restore-plan-select');
+            if (!tbody || !empty) return;
+            tbody.innerHTML = '';
+            empty.style.display = 'none';
+            if (planSelect) {
+                planSelect.innerHTML = '<option value="">-- 请选择或手动填写下方信息 --</option>';
+            }
+            if (restorePlanSelect) {
+                restorePlanSelect.innerHTML = '<option value="">-- 请选择或手动填写下方目标连接信息 --</option>';
+            }
+            try {
+                const r = await fetch('/backup-plans');
+                const j = await r.json();
+                const items = (j.code === 200 && j.data && (j.data.items || [])) || [];
+                window._backupPlansCache = items;
+                const esc = s => ('' + s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+                items.forEach(it => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML =
+                        '<td>' + esc(it.name || '') + '</td>' +
+                        '<td>' + esc(it.host || '') + '</td>' +
+                        '<td>' + esc(it.port || '') + '</td>' +
+                        '<td>' + esc(it.database || '') + '</td>' +
+                        '<td>' + esc(it.user || '') + '</td>' +
+                        '<td>' +
+                            '<button class="btn btn-secondary btn-sm btn-plan-edit" data-id="' + esc(it.id || '') + '">编辑</button> ' +
+                            '<button class="btn btn-secondary btn-sm btn-plan-test" data-id="' + esc(it.id || '') + '">测试连接</button> ' +
+                            '<button class="btn btn-danger btn-sm btn-plan-del" data-id="' + esc(it.id || '') + '">删除</button>' +
+                        '</td>';
+                    tbody.appendChild(tr);
+                });
+                if (planSelect) {
+                    items.forEach(it => {
+                        const opt = document.createElement('option');
+                        opt.value = it.id || '';
+                        opt.textContent = (it.name || it.id || '未命名') + (it.database ? ' (' + it.database + ')' : '');
+                        planSelect.appendChild(opt);
+                    });
+                }
+                if (restorePlanSelect) {
+                    items.forEach(it => {
+                        const opt = document.createElement('option');
+                        opt.value = it.id || '';
+                        opt.textContent = (it.name || it.id || '未命名') + (it.database ? ' (' + it.database + ')' : '');
+                        restorePlanSelect.appendChild(opt);
+                    });
+                }
+                tbody.querySelectorAll('.btn-plan-edit').forEach(btn => {
+                    btn.onclick = () => {
+                        const id = btn.dataset.id;
+                        if (!id) return;
+                        const plan = (window._backupPlansCache || []).find(p => p.id === id);
+                        if (!plan) {
+                            toast('未找到对应的数据库实例信息', 'error');
+                            return;
+                        }
+                        openPlanModal(id);
+                    };
+                });
+                tbody.querySelectorAll('.btn-plan-test').forEach(btn => {
+                    btn.onclick = () => {
+                        const id = btn.dataset.id;
+                        if (!id) return;
+                        testPlanConnection(id);
+                    };
+                });
+                tbody.querySelectorAll('.btn-plan-del').forEach(btn => {
+                    btn.onclick = () => {
+                        const id = btn.dataset.id;
+                        if (!id) return;
+                        const plan = (window._backupPlansCache || []).find(p => p.id === id);
+                        const jobs = (plan && Array.isArray(plan.jobs)) ? plan.jobs : [];
+                        if (jobs.length > 0) {
+                            toast('该实例下仍存在定时任务，请先在“定时任务列表”中清理完定时任务后再删除实例信息。', 'error');
+                            return;
+                        }
+                        const msg = '确定要删除该数据库实例信息吗？';
+                        if (!confirm(msg)) return;
+                        deleteBackupPlan(id);
+                    };
+                });
+                if (!items.length) {
+                    empty.style.display = 'block';
+                }
+            } catch (e) {
+                empty.style.display = 'block';
+                empty.textContent = '加载失败: ' + e.message;
+            }
+        }
+
+        async function deleteBackupPlan(id) {
+            try {
+                const r = await fetch('/backup-plans/' + encodeURIComponent(id), {
+                    method: 'DELETE'
+                });
+                const j = await r.json();
+                if (j.code === 200) {
+                    toast('删除成功');
+                    loadBackupPlans();
+                } else {
+                    toast('删除失败: ' + (j.msg || ''), 'error');
+                }
+            } catch (e) {
+                toast('请求失败: ' + e.message, 'error');
             }
         }
 
@@ -830,6 +1976,8 @@
                 toast('请填写完整还原信息', 'error');
                 return;
             }
+            const okConn = await ensureRestoreConnectionOK();
+            if (!okConn) return;
             if (!confirm('确定要还原到数据库 "' + targetDb + '" 吗？此操作可能覆盖现有数据。')) return;
             const btn = document.getElementById('btn-restore');
             btn.disabled = true;
@@ -939,12 +2087,100 @@
         document.getElementById('filter-db').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') loadBackups();
         });
+        const jobCronInput = document.getElementById('job-cron');
+        if (jobCronInput) {
+            const updateJobCronPreview = () => {
+                const preview = document.getElementById('job-cron-preview');
+                if (!preview) return;
+                const expr = jobCronInput.value.trim();
+                if (!expr) {
+                    preview.textContent = '未设置调度策略，任务不会自动执行。';
+                    return;
+                }
+                const runs = computeNextCronRuns(expr, 5);
+                if (!runs || !runs.length) {
+                    preview.textContent = 'cron 表达式无效，请检查格式（例如 0 0 12 * * 表示每天 12:00 执行）。';
+                    return;
+                }
+                const fmt = d => {
+                    const pad = n => (n < 10 ? '0' + n : '' + n);
+                    const y = d.getFullYear();
+                    const m = pad(d.getMonth() + 1);
+                    const day = pad(d.getDate());
+                    const h = pad(d.getHours());
+                    const mi = pad(d.getMinutes());
+                    return `${y}-${m}-${day} ${h}:${mi}`;
+                };
+                preview.textContent = '最近 5 次预计运行时间：' + runs.map(fmt).join('， ');
+            };
+            jobCronInput.addEventListener('input', updateJobCronPreview);
+            jobCronInput.addEventListener('blur', updateJobCronPreview);
+            updateJobCronPreview();
+        }
+        const jobPlanSelect = document.getElementById('job-plan-select');
+        if (jobPlanSelect) {
+            jobPlanSelect.addEventListener('change', function() {
+                refreshJobPlanInfo(this.value ? this.value.trim() : null);
+            });
+        }
+        const backupPlanSelect = document.getElementById('backup-plan-select');
+        if (backupPlanSelect) {
+            backupPlanSelect.addEventListener('change', function() {
+                const id = this.value;
+                if (!id) return;
+                (async () => {
+                    try {
+                        const r = await fetch('/backup-plans/' + encodeURIComponent(id));
+                        const j = await r.json();
+                        if (j.code === 200 && j.data) {
+                            fillBackupFormFromPlan(j.data);
+                        } else {
+                            // 回退使用内存缓存里的非敏感字段
+                            const plan = (window._backupPlansCache || []).find(p => p.id === id);
+                            if (plan) fillBackupFormFromPlan(plan);
+                            toast('获取数据库实例详情失败: ' + (j.msg || ''), 'error');
+                        }
+                    } catch (e) {
+                        const plan = (window._backupPlansCache || []).find(p => p.id === id);
+                        if (plan) fillBackupFormFromPlan(plan);
+                        toast('请求数据库实例详情失败: ' + e.message, 'error');
+                    }
+                })();
+            });
+        }
+        const restorePlanSelect = document.getElementById('restore-plan-select');
+        if (restorePlanSelect) {
+            restorePlanSelect.addEventListener('change', function() {
+                const id = this.value;
+                if (!id) return;
+                (async () => {
+                    try {
+                        const r = await fetch('/backup-plans/' + encodeURIComponent(id));
+                        const j = await r.json();
+                        if (j.code === 200 && j.data) {
+                            fillRestoreFormFromPlan(j.data);
+                        } else {
+                            const plan = (window._backupPlansCache || []).find(p => p.id === id);
+                            if (plan) fillRestoreFormFromPlan(plan);
+                            toast('获取数据库实例详情失败: ' + (j.msg || ''), 'error');
+                        }
+                    } catch (e) {
+                        const plan = (window._backupPlansCache || []).find(p => p.id === id);
+                        if (plan) fillRestoreFormFromPlan(plan);
+                        toast('请求数据库实例详情失败: ' + e.message, 'error');
+                    }
+                })();
+            });
+        }
         const restoreBackupSelect = document.getElementById('restore-backup-dir');
         if (restoreBackupSelect) {
             restoreBackupSelect.addEventListener('change', () => {
                 loadRestoreIncrementals(restoreBackupSelect.value);
             });
         }
+        // 初始加载一次备份计划列表与定时任务列表
+        loadBackupPlans();
+        loadScheduledTasks();
         const restoreIncSelect = document.getElementById('restore-inc-dir');
         if (restoreIncSelect) {
             restoreIncSelect.addEventListener('change', updateRestoreIncrementalAvailability);

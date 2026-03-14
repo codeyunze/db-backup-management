@@ -2,7 +2,7 @@
 
 包含 MySQL 备份/还原脚本的 Docker 镜像，内置 mysql、mysqldump、Python3，提供 HTTP API 接口。
 
-![image-20260306193234070](images/image-20260306193234070.png)
+![image-20260306193234070](docs/images/image-20260306193234070.png)
 
 
 ## 运行服务

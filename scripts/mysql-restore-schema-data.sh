@@ -201,38 +201,62 @@ table_exists_in_db() {
     [ "${cnt:-0}" -ge 1 ] 2>/dev/null
 }
 
+# 根据文件后缀选择导入方式，兼容 .sql 与 .sql.gz
+import_sql_file() {
+    local sql_file="$1"
+    if [[ "${sql_file}" == *.gz ]]; then
+        gzip -cd "${sql_file}" | ${MYSQL_CMD} "${NEW_DB_NAME}"
+    else
+        ${MYSQL_CMD} "${NEW_DB_NAME}" < "${sql_file}"
+    fi
+}
+
 # 对单表/视图执行：导入结构 + 导入数据（视图无数据）
 restore_one_table() {
     local TABLE="$1"
-    local schema_file="${BACKUP_DIR}/schema/${TABLE}.sql"
-    local SINGLE="${BACKUP_DIR}/data/${TABLE}.sql"
+    local schema_sql="${BACKUP_DIR}/schema/${TABLE}.sql"
+    local schema_gz="${BACKUP_DIR}/schema/${TABLE}.sql.gz"
+    local schema_file=""
+    if [ -f "${schema_gz}" ]; then
+        schema_file="${schema_gz}"
+    elif [ -f "${schema_sql}" ]; then
+        schema_file="${schema_sql}"
+    fi
+    local single_sql="${BACKUP_DIR}/data/${TABLE}.sql"
+    local single_gz="${BACKUP_DIR}/data/${TABLE}.sql.gz"
+    local SINGLE=""
+    if [ -f "${single_gz}" ]; then
+        SINGLE="${single_gz}"
+    elif [ -f "${single_sql}" ]; then
+        SINGLE="${single_sql}"
+    fi
 
-    if [ ! -f "${schema_file}" ]; then
+    if [ -z "${schema_file}" ] || [ ! -f "${schema_file}" ]; then
         echo "  跳过（无结构文件）: ${TABLE}"
         return 0
     fi
 
     if is_view "${TABLE}"; then
         echo "  -> 导入视图: ${TABLE}"
-        ${MYSQL_CMD} "${NEW_DB_NAME}" < "${schema_file}"
+        import_sql_file "${schema_file}"
         return 0
     fi
 
     echo "  -> 导入表结构: ${TABLE}"
-    ${MYSQL_CMD} "${NEW_DB_NAME}" < "${schema_file}"
+    import_sql_file "${schema_file}"
 
-    if [ -f "${SINGLE}" ]; then
+    if [ -n "${SINGLE}" ] && [ -f "${SINGLE}" ]; then
         echo "  -> 导入数据: ${TABLE}.sql"
-        ${MYSQL_CMD} "${NEW_DB_NAME}" < "${SINGLE}"
+        import_sql_file "${SINGLE}"
     else
-        PART_FILES=$(find "${BACKUP_DIR}/data" -maxdepth 1 -name "${TABLE}_*.sql" -type f 2>/dev/null | sort -V)
+        PART_FILES=$(find "${BACKUP_DIR}/data" -maxdepth 1 \( -name "${TABLE}_*.sql" -o -name "${TABLE}_*.sql.gz" \) -type f 2>/dev/null | sort -V)
         if [ -z "${PART_FILES}" ]; then
             echo "  跳过（无数据文件）: ${TABLE}"
         else
             while IFS= read -r data_file; do
                 [ -n "${data_file}" ] || continue
                 echo "  -> 导入数据: $(basename "${data_file}")"
-                ${MYSQL_CMD} "${NEW_DB_NAME}" < "${data_file}"
+                import_sql_file "${data_file}"
             done <<< "${PART_FILES}"
         fi
     fi
@@ -253,17 +277,20 @@ fi
 echo "1. 正在创建新数据库 '${NEW_DB_NAME}'..."
 ${MYSQL_CMD} -e "CREATE DATABASE IF NOT EXISTS \`${NEW_DB_NAME}\`;"
 
-# 2. 获取待恢复表/视图列表
+# 2. 获取待恢复表/视图列表（兼容仅存在 .sql 或仅存在 .sql.gz 的备份）
 if [ -n "${TARGET_TABLES}" ]; then
     TABLES_TO_RESTORE="${TARGET_TABLES}"
 else
     TABLES_TO_RESTORE=""
-    for schema_file in "${BACKUP_DIR}"/schema/*.sql; do
+    for schema_file in "${BACKUP_DIR}"/schema/*.sql "${BACKUP_DIR}"/schema/*.sql.gz; do
         [ -f "${schema_file}" ] || continue
-        name=$(basename "${schema_file}" .sql)
+        name=$(basename "${schema_file}")
+        name="${name%.sql.gz}"
+        name="${name%.sql}"
         [ "${name}" = ".views" ] && continue
         TABLES_TO_RESTORE="${TABLES_TO_RESTORE} ${name}"
     done
+    TABLES_TO_RESTORE=$(echo "${TABLES_TO_RESTORE}" | tr ' ' '\n' | sort -u | tr '\n' ' ')
 fi
 
 # 应用 -i 排除：从 TABLES_TO_RESTORE 中移除 IGNORE_TABLES 中的表/视图

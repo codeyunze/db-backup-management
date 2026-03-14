@@ -162,25 +162,56 @@
 
 ## 开发计划
 
-### 4. 自动计划备份
+### 4. 自动计划备份（基于操作系统 crontab）
 
-- **目标**：
-  - 支持按固定周期或指定时间自动执行数据库备份，无需人工触发，保证数据定期落盘。
-- **实现思路**：
+> 说明：在真正做定时备份之前，需要先解决“备份配置（数据库地址、账号、密码、端口、备份参数等）的持久化存储与管理问题”。**配置管理的实现优先级高于定时备份本身**。
+
+- **4.1 备份配置的持久化管理（优先级更高）**：
+  - **目标**：
+    - 能以结构化方式持久化存储多个“备份配置”，每个配置描述一次完整备份任务所需的所有信息；
+    - 支持多套环境（例如 mall-生产、mall-测试），每套有自己的数据库连接和备份策略；
+    - 为后续系统 crontab 调度提供统一入口（通过“配置 ID / 名称”调用）。
+  - **配置内容（示例字段）**：
+    - 基础连接：`name`（配置名称）、`host`、`port`、`user`、`password`、`database`；
+    - 备份参数：`backup_dir`、`tables_include`、`tables_exclude`、`clean_days`、`enable_gzip`、`backup_type`（full / incremental / full+incremental 策略）；
+    - 调度参数（可选）：`cron` 表达式、是否启用、下次执行时间缓存等。
+  - **存储形式建议**：
+    - 第一阶段采用 **本地 JSON/YAML 文件** 持久化（例如 `/data/backup/mysql/backup-plans.json`），结构清晰、易于备份；
+    - 每个配置一个对象，支持增删改查；后续若需要可迁移到数据库表。
+  - **配置管理入口**：
+    - 提供一个统一的“配置驱动脚本”（例如 `scripts/run-backup-by-config.sh`）：
+      - 接收参数 `--config-name <NAME>` 或 `--config-id <ID>`；
+      - 从配置文件中读出对应备份配置，组装为对 `mysql-backup-schema-data.sh` 或 `/db/backup` 的调用参数；
+      - 支持可选模式：只做全量、只做增量、全量+增量策略（例如先判断今天是否已有全量，没有则做全量，否则做增量）。
+    - 后端 API 预留：将来可通过 `/backup-plans` 系列接口管理这些配置，并从 Web 界面编辑。
+
+- **4.2 基于 crontab 的定时执行方案**：
+  - **目标**：
+    - 利用操作系统自带的 `crontab` 实现“按固定周期自动执行备份任务”，无需在应用内引入额外调度框架；
+    - 计划任务只负责按时间调用“配置驱动脚本”，真正的备份逻辑仍复用现有脚本/API。
   - **调度方式**：
-    - 方案 A：使用系统 cron 配置，在 `scripts/` 下提供示例 crontab 或安装脚本（如 `install-cron.sh`），按“每日/每周/自定义”生成 cron 表达式；
-    - 方案 B：在应用内集成轻量调度（如 APScheduler），通过 Web 配置“备份计划”（数据库、周期、保留策略），由后端进程定时调用现有备份 API 或脚本。
-  - **计划配置**：
-    - 支持按数据库、按表（可选）、备份类型（全量/后续增量）配置；
-    - 支持周期：每日、每周指定星期、每月指定日、自定义 cron 表达式；
-    - 可选：备份前检查磁盘空间、备份后校验文件完整性（如 checksum）。
+    - 在 `scripts/` 目录下提供示例 crontab 片段或安装脚本（如 `install-cron.sh`），内容类似：
+      - 每日 02:00 为 mall 生产库执行一次备份：
+        - `0 2 * * * /usr/bin/bash /scripts/run-backup-by-config.sh --config-name mall-prod >> /var/log/db-backup-cron.log 2>&1`
+      - 每 4 小时为 mall 测试库执行一次增量备份：
+        - `0 */4 * * * /usr/bin/bash /scripts/run-backup-by-config.sh --config-name mall-test-incr >> /var/log/db-backup-cron.log 2>&1`
+    - 支持用户根据示例自行编辑系统 crontab，或通过简单安装脚本写入预定义条目。
+  - **计划配置与策略**：
+    - 配置中可定义备份类型策略：
+      - `mode = full_only`：始终执行全量；
+      - `mode = incremental_only`：仅执行增量（假设已存在基线全量）；
+      - `mode = smart_full_and_incremental`：例如每周一全量，其余天增量（由 `run-backup-by-config.sh` 内部判断当前日期和历史全量情况决定是调 `/db/backup` 还是 `/db/backup-incremental`）。
+    - 可选增强（后续）：在执行前检查磁盘空间，在执行后计算并记录备份文件体积、执行耗时、成功/失败状态。
   - **与现有能力衔接**：
-    - 复用现有备份脚本与 API（如 `POST /db/backup`），计划任务仅负责“在指定时间触发”；
-    - 备份结果仍写入当前备份目录结构，便于与“备份列表”“还原”功能统一管理。
-- **交付物**：
-  - 计划配置的存储（如 JSON/DB 表）与读写接口；
-  - 调度执行逻辑及日志（成功/失败、下次执行时间）；
-  - 若采用 Web 配置：在管理界面增加“计划备份”页，支持增删改查与启用/停用。
+    - 定时任务只调用“配置驱动脚本”，后者再根据配置选择：
+      - 直接调用 shell：`mysql-backup-schema-data.sh` / `mysql-backup-incremental.sh`；
+      - 或通过 HTTP 调用当前容器提供的 `/db/backup`、`/db/backup-incremental` 接口（适用于把调度放在外部节点的场景）。
+    - 备份结果仍写入当前备份目录结构（`schema/`、`data/`、`meta/`、`backup.log`），便于与 Web 界面的“备份列表”“数据还原”“查看增量链”打通。
+  - **交付物**：
+    - `backup-plans.json`（命名可调整）及其数据结构定义与示例；
+    - `run-backup-by-config.sh`：根据配置名称/ID 执行一次全量或增量备份的集成脚本；
+    - 示例 crontab 片段与可选安装脚本 `install-cron.sh`；
+    - 错误与执行日志规范（例如单独的 `/var/log/db-backup-cron.log`），便于排查定时任务问题。
 
 ### 5. 系统登入验证功能
 
