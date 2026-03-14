@@ -1339,7 +1339,8 @@
                     const runBtn = !enabled ? '<button class="btn btn-secondary btn-sm btn-job-run" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">运行</button> ' : '';
                     const stopBtn = enabled ? '<button class="btn btn-secondary btn-sm btn-job-stop" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">停止</button> ' : '';
                     const delBtn = !enabled ? '<button class="btn btn-danger btn-sm btn-job-del" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">删除</button>' : '';
-                    const editBtn = '<button class="btn btn-secondary btn-sm btn-job-edit" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">编辑</button> ';
+                    const editBtn = !enabled ? '<button class="btn btn-secondary btn-sm btn-job-edit" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">编辑</button> ' : '';
+                    const logBtn = '<button class="btn btn-secondary btn-sm btn-job-log" data-job-id="' + esc(it.id || '') + '">日志</button> ';
                     tr.innerHTML =
                         '<td class="col-name">' + esc(it.name || '') + '</td>' +
                         '<td class="col-plan-name">' + esc(it.plan_name || '') + '</td>' +
@@ -1349,7 +1350,7 @@
                         '<td class="col-next">' + esc(nextText) + '</td>' +
                         '<td class="col-status">' + statusText + '</td>' +
                         '<td class="col-actions">' +
-                            editBtn + runBtn + stopBtn + delBtn +
+                            editBtn + logBtn + runBtn + stopBtn + delBtn +
                         '</td>';
                     tbody.appendChild(tr);
                 });
@@ -1383,6 +1384,12 @@
                         const jobId = btn.dataset.jobId;
                         if (!confirm('确定要删除该定时任务吗？')) return;
                         deleteJob(planId, jobId);
+                    };
+                });
+                tbody.querySelectorAll('.btn-job-log').forEach(btn => {
+                    btn.onclick = () => {
+                        const jobId = btn.dataset.jobId;
+                        if (jobId) showJobLog(jobId);
                     };
                 });
                 if (items.length === 0) empty.style.display = 'block';
@@ -1469,7 +1476,16 @@
 
         async function testPlanConnection(id, payload) {
             let plan = null;
-            if (id) {
+            if (id && !payload) {
+                try {
+                    const r = await fetch('/backup-plans/' + encodeURIComponent(id));
+                    const j = await r.json().catch(() => ({}));
+                    if (r.ok && j.code === 200 && j.data) plan = j.data;
+                    else plan = (window._backupPlansCache || []).find(p => p.id === id);
+                } catch (e) {
+                    plan = (window._backupPlansCache || []).find(p => p.id === id);
+                }
+            } else if (id) {
                 plan = (window._backupPlansCache || []).find(p => p.id === id);
             }
             const host = payload?.host ?? plan?.host ?? '';
@@ -1479,6 +1495,10 @@
             const database = payload?.database ?? plan?.database ?? '';
             if (!host || !user || !database) {
                 toast('请填写主机、用户名、数据库名', 'error');
+                return false;
+            }
+            if (!password && id) {
+                toast('无法获取该实例的密码，请尝试在编辑中重新保存密码后再测试连接', 'error');
                 return false;
             }
             try {
@@ -1559,7 +1579,7 @@
         let _editingJobPlanId = null;
         let _editingJobId = null;
 
-        function openJobModal(job) {
+        async function openJobModal(job) {
             const modal = document.getElementById('job-modal');
             const title = document.getElementById('job-modal-title');
             const planSel = document.getElementById('job-plan-select');
@@ -1592,6 +1612,18 @@
                 tablesEl.value = job.tables || '';
                 ignoreEl.value = job.ignore_tables || '';
                 cleanEl.value = job.clean_days != null ? job.clean_days : 0;
+                // 列表接口未返回 tables/ignore_tables，从该实例下获取完整 job 回填
+                try {
+                    const r = await fetch('/backup-plans/' + encodeURIComponent(job.plan_id));
+                    const j = await r.json().catch(() => ({}));
+                    if (r.ok && j.code === 200 && j.data && Array.isArray(j.data.jobs)) {
+                        const fullJob = j.data.jobs.find(ji => (ji.id || '') === (job.id || ''));
+                        if (fullJob) {
+                            tablesEl.value = fullJob.tables || '';
+                            ignoreEl.value = fullJob.ignore_tables || '';
+                        }
+                    }
+                } catch (e) { /* 保留已填写的空值 */ }
             } else {
                 _editingJobPlanId = null;
                 _editingJobId = null;
@@ -1714,16 +1746,25 @@
                 enable_gzip: enableGzip
             };
 
-            // 新增的调度任务默认状态为“停止”
-            if (!_editingJobId) {
+            // 新增的调度任务默认状态为“停止”；编辑时若切换到其他实例，新任务也设为停止
+            if (!_editingJobId || planId !== _editingJobPlanId) {
                 body.enabled = false;
             }
 
             try {
-                const url = _editingJobId
-                    ? ('/backup-plans/' + encodeURIComponent(_editingJobPlanId || planId) + '/jobs/' + encodeURIComponent(_editingJobId))
-                    : ('/backup-plans/' + encodeURIComponent(planId) + '/jobs');
-                const method = _editingJobId ? 'PUT' : 'POST';
+                let url, method;
+                const editingSamePlan = _editingJobId && planId === _editingJobPlanId;
+                if (editingSamePlan) {
+                    url = '/backup-plans/' + encodeURIComponent(planId) + '/jobs/' + encodeURIComponent(_editingJobId);
+                    method = 'PUT';
+                } else if (_editingJobId && planId !== _editingJobPlanId) {
+                    // 编辑时切换了实例：在新实例下创建任务，再删除原实例下的旧任务
+                    url = '/backup-plans/' + encodeURIComponent(planId) + '/jobs';
+                    method = 'POST';
+                } else {
+                    url = '/backup-plans/' + encodeURIComponent(planId) + '/jobs';
+                    method = 'POST';
+                }
                 const r = await fetch(url, {
                     method,
                     headers: { 'Content-Type': 'application/json' },
@@ -1731,7 +1772,17 @@
                 });
                 const j = await r.json().catch(() => ({}));
                 if (j.code === 200) {
-                    toast(_editingJobId ? '调度任务已更新' : '调度任务已创建（状态：停止）');
+                    if (_editingJobId && planId !== _editingJobPlanId) {
+                        const delR = await fetch('/backup-plans/' + encodeURIComponent(_editingJobPlanId) + '/jobs/' + encodeURIComponent(_editingJobId), { method: 'DELETE' });
+                        const delJ = await delR.json().catch(() => ({}));
+                        if (delJ.code !== 200) {
+                            toast('已在新实例下创建任务，但删除原实例下的旧任务失败: ' + (delJ.msg || ''), 'error');
+                        } else {
+                            toast('已切换实例并更新任务（新任务状态：停止）');
+                        }
+                    } else {
+                        toast(_editingJobId ? '调度任务已更新' : '调度任务已创建（状态：停止）');
+                    }
                     closeJobModal();
                     loadScheduledTasks();
                 } else {
