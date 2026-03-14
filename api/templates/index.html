@@ -1437,6 +1437,7 @@
                 });
                 const j = await r.json();
                 if (j.code === 200) {
+                    toast('连接成功');
                     return true;
                 } else {
                     toast(j.msg || '连接失败', 'error');
@@ -1758,7 +1759,7 @@
             if (tablesEl) tablesEl.value = plan.tables || '';
             if (ignoreEl) ignoreEl.value = plan.ignore_tables || '';
             if (cleanEl) cleanEl.value = plan.clean_days != null ? plan.clean_days : 0;
-            if (gzipEl) gzipEl.checked = !!plan.enable_gzip;
+            if (gzipEl) gzipEl.checked = true;
         }
 
         function fillRestoreFormFromPlan(plan) {
