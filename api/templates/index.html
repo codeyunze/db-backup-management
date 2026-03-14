@@ -245,7 +245,8 @@
         #scheduled-tasks-table .col-last { width: 165px; min-width: 165px; }
         #scheduled-tasks-table .col-next { width: 165px; min-width: 165px; }
         #scheduled-tasks-table .col-status { width: 6%; }
-        #scheduled-tasks-table .col-actions { width: 22%; min-width: 190px; }
+        #scheduled-tasks-table .col-actions { width: 26%; min-width: 280px; overflow: visible; white-space: nowrap; }
+        #scheduled-tasks-table td.col-actions { overflow: visible; }
         .empty-state {
             padding: 40px;
             text-align: center;
@@ -381,21 +382,23 @@
                 </span>
             </div>
             <div class="card-body">
-                <table id="scheduled-tasks-table">
-                    <thead>
-                        <tr>
-                            <th class="col-name">任务名称</th>
-                            <th class="col-plan-name">实例名称</th>
-                            <th class="col-type">备份类型</th>
-                            <th class="col-cron">调度策略</th>
-                            <th class="col-last">上次执行时间</th>
-                            <th class="col-next">下次执行时间</th>
-                            <th class="col-status">状态</th>
-                            <th class="col-actions">操作</th>
-                        </tr>
-                    </thead>
-                    <tbody id="scheduled-tasks-tbody"></tbody>
-                </table>
+                <div class="table-responsive" style="overflow-x: auto;">
+                    <table id="scheduled-tasks-table" style="min-width: 1100px;">
+                        <thead>
+                            <tr>
+                                <th class="col-name">任务名称</th>
+                                <th class="col-plan-name">实例名称</th>
+                                <th class="col-type">备份类型</th>
+                                <th class="col-cron">调度策略</th>
+                                <th class="col-last">上次执行时间</th>
+                                <th class="col-next">下次执行时间</th>
+                                <th class="col-status">状态</th>
+                                <th class="col-actions">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="scheduled-tasks-tbody"></tbody>
+                    </table>
+                </div>
                 <div id="scheduled-tasks-empty" class="empty-state" style="display:none;">暂无定时任务</div>
             </div>
         </div>
@@ -488,23 +491,9 @@
                     </div>
                 </div>
                 <div class="form-row">
-                    <div class="form-group" style="flex:2;">
-                        <label>调度任务名称（可选）</label>
-                        <input type="text" id="backup-cron-name" placeholder="例如 每天中午全量备份 mall">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group" style="flex:2;">
-                        <label>调度策略（cron 表达式）（可选）</label>
-                        <input type="text" id="backup-cron" placeholder="如 0 * * * * 表示每小时整点执行">
-                        <small id="backup-cron-preview" style="display:block;margin-top:4px;font-size:0.8rem;color:#8c959f;"></small>
-                    </div>
-                </div>
-                <div class="form-row">
                     <div class="form-group actions">
                         <button class="btn btn-secondary" id="btn-test-backup" onclick="testConnectionBackup()">测试连接</button>
                         <button class="btn" id="btn-backup" onclick="doBackup()">执行备份</button>
-                        <button class="btn btn-secondary" id="btn-save-job" onclick="saveScheduleJob()">保存调度任务</button>
                     </div>
                 </div>
             </div>
@@ -899,32 +888,6 @@
             return results;
         }
 
-        function updateCronPreview() {
-            const input = document.getElementById('backup-cron');
-            const preview = document.getElementById('backup-cron-preview');
-            if (!input || !preview) return;
-            const expr = input.value.trim();
-            if (!expr) {
-                preview.textContent = '未设置调度策略，将不会自动执行备份。';
-                return;
-            }
-            const runs = computeNextCronRuns(expr, 5);
-            if (!runs || !runs.length) {
-                preview.textContent = 'cron 表达式无效，请检查格式（例如 0 0 12 * * 表示每天 12:00 执行）。';
-                return;
-            }
-            const fmt = d => {
-                const pad = n => (n < 10 ? '0' + n : '' + n);
-                const y = d.getFullYear();
-                const m = pad(d.getMonth() + 1);
-                const day = pad(d.getDate());
-                const h = pad(d.getHours());
-                const mi = pad(d.getMinutes());
-                return `${y}-${m}-${day} ${h}:${mi}`;
-            };
-            preview.textContent = '最近 5 次预计运行时间：' + runs.map(fmt).join('， ');
-        }
-
         async function loadBackups() {
             const filter = document.getElementById('filter-db').value.trim();
             const url = filter ? '/db/backups?database=' + encodeURIComponent(filter) : '/db/backups';
@@ -1134,58 +1097,11 @@
             }
             const okConn = await ensureBackupConnectionOK();
             if (!okConn) return;
-            const cronInput = document.getElementById('backup-cron');
-            const cronNameInput = document.getElementById('backup-cron-name');
-            const cronExpr = cronInput ? cronInput.value.trim() : '';
-            const cronName = cronNameInput ? cronNameInput.value.trim() : '';
             const btn = document.getElementById('btn-backup');
             btn.disabled = true;
             btn.textContent = backupType === 'incremental' ? '增量备份中...' : '备份中...';
             try {
-                // 如果填写了调度策略，则作为定时任务（运行状态）写入配置，不立即执行备份
-                if (cronExpr || cronName) {
-                    if (!cronExpr || !cronName) {
-                        toast('调度任务名称和调度策略都不能为空', 'error');
-                        return;
-                    }
-                    if (backupType === 'incremental') {
-                        toast('暂不支持为增量备份配置调度策略，请选择全量备份或清空调度策略后再试。', 'error');
-                        return;
-                    }
-                    const planSelect = document.getElementById('backup-plan-select');
-                    const selectedPlanId = planSelect && planSelect.value ? planSelect.value.trim() : '';
-                    if (!selectedPlanId) {
-                        toast('请先在“选择数据库实例信息”中选择或保存一个实例，再配置调度策略。', 'error');
-                        return;
-                    }
-                    const cleanDays = parseInt(document.getElementById('backup-clean').value) || 0;
-                    const tables = document.getElementById('backup-tables').value.trim();
-                    const ignore = document.getElementById('backup-ignore').value.trim();
-                    const gzipCheckbox = document.getElementById('backup-gzip');
-                    const body = {
-                        schedule: cronExpr,
-                        backup_type: backupType,
-                        name: cronName,
-                        tables: tables || undefined,
-                        ignore_tables: ignore || undefined,
-                        clean_days: cleanDays,
-                        enable_gzip: !!(gzipCheckbox && gzipCheckbox.checked),
-                        enabled: true
-                    };
-                    const r = await fetch('/backup-plans/' + encodeURIComponent(selectedPlanId) + '/jobs', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(body)
-                    });
-                    const j = await r.json();
-                    if (j.code === 200) {
-                        toast('已创建并启用定时任务，不会立即执行备份。');
-                        loadBackupPlans();
-                        loadScheduledTasks();
-                    } else {
-                        toast('保存定时任务失败: ' + (j.msg || ''), 'error');
-                    }
-                } else if (backupType === 'full') {
+                if (backupType === 'full') {
                     const body = {
                         host,
                         port: document.getElementById('backup-port').value || '3306',
@@ -1263,7 +1179,6 @@
             if (!okConn) return;
             const clean = parseInt(document.getElementById('backup-clean').value) || 0;
             const gzipCheckbox = document.getElementById('backup-gzip');
-            const cronInput = document.getElementById('backup-cron');
             const tables = document.getElementById('backup-tables').value.trim();
             const ignore = document.getElementById('backup-ignore').value.trim();
             const planSelect = document.getElementById('backup-plan-select');
@@ -1280,7 +1195,6 @@
                 ignore_tables: ignore || '',
                 clean_days: clean,
                 enable_gzip: !!(gzipCheckbox && gzipCheckbox.checked),
-                schedule: cronInput ? (cronInput.value.trim() || null) : null,
                 mode: 'full_only'
             };
             if (isUpdate) {
@@ -1793,70 +1707,6 @@
             }
         }
 
-        // 单独保存一个“停止”状态的调度任务（不改变 crontab）
-        async function saveScheduleJob() {
-            const host = document.getElementById('backup-host').value.trim();
-            const user = document.getElementById('backup-user').value.trim();
-            const password = document.getElementById('backup-password').value;
-            const database = document.getElementById('backup-database').value.trim();
-            if (!host || !user || !password || !database) {
-                toast('请填写主机、用户名、密码、数据库名', 'error');
-                return;
-            }
-            const okConn = await ensureBackupConnectionOK();
-            if (!okConn) return;
-            const cronInput = document.getElementById('backup-cron');
-            const cronNameInput = document.getElementById('backup-cron-name');
-            const cronExpr = cronInput ? cronInput.value.trim() : '';
-            const cronName = cronNameInput ? cronNameInput.value.trim() : '';
-            if (!cronExpr || !cronName) {
-                toast('调度任务名称和调度策略都不能为空', 'error');
-                return;
-            }
-            const planSelect = document.getElementById('backup-plan-select');
-            const selectedPlanId = planSelect && planSelect.value ? planSelect.value.trim() : '';
-            if (!selectedPlanId) {
-                toast('请先在“选择数据库实例信息”中选择或保存一个实例，再保存调度任务。', 'error');
-                return;
-            }
-            const cleanDays = parseInt(document.getElementById('backup-clean').value) || 0;
-            const tables = document.getElementById('backup-tables').value.trim();
-            const ignore = document.getElementById('backup-ignore').value.trim();
-            const gzipCheckbox = document.getElementById('backup-gzip');
-            const body = {
-                schedule: cronExpr,
-                backup_type: 'full',
-                name: cronName,
-                tables: tables || undefined,
-                ignore_tables: ignore || undefined,
-                clean_days: cleanDays,
-                enable_gzip: !!(gzipCheckbox && gzipCheckbox.checked),
-                enabled: false
-            };
-            const btn = document.getElementById('btn-save-job');
-            btn.disabled = true;
-            btn.textContent = '保存中...';
-            try {
-                const r = await fetch('/backup-plans/' + encodeURIComponent(selectedPlanId) + '/jobs', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body)
-                });
-                const j = await r.json();
-                if (j.code === 200) {
-                    toast('已保存调度任务（状态：停止）。');
-                    loadScheduledTasks();
-                } else {
-                    toast('保存调度任务失败: ' + (j.msg || ''), 'error');
-                }
-            } catch (e) {
-                toast('保存调度任务失败: ' + e.message, 'error');
-            } finally {
-                btn.disabled = false;
-                btn.textContent = '保存调度任务';
-            }
-        }
-
         // showJobLog 保留备用，如后续需要从任务调度中查看单个任务日志可复用
         async function showJobLog(jobId) {
             const modal = document.getElementById('log-modal');
@@ -1890,10 +1740,8 @@
             const dbEl = document.getElementById('backup-database');
             const tablesEl = document.getElementById('backup-tables');
             const ignoreEl = document.getElementById('backup-ignore');
-            const cronEl = document.getElementById('backup-cron');
             const cleanEl = document.getElementById('backup-clean');
             const gzipEl = document.getElementById('backup-gzip');
-            const cronNameEl = document.getElementById('backup-cron-name');
             if (hostEl) hostEl.value = plan.host || '';
             if (portEl) portEl.value = plan.port != null ? plan.port : '3306';
             if (userEl) userEl.value = plan.user || '';
@@ -1903,13 +1751,6 @@
             if (ignoreEl) ignoreEl.value = plan.ignore_tables || '';
             if (cleanEl) cleanEl.value = plan.clean_days != null ? plan.clean_days : 0;
             if (gzipEl) gzipEl.checked = !!plan.enable_gzip;
-            if (cronEl) {
-                // 编辑实例信息时不自动带出 plan.schedule，避免误解；让用户在“调度任务”区域重新填写
-                cronEl.value = '';
-                updateCronPreview();
-            }
-            // 编辑数据库实例信息时，“调度任务名称”是针对新建 job 的，不自动带入已有 job 名称，避免误解
-            if (cronNameEl) cronNameEl.value = '';
         }
 
         async function loadBackupPlans() {
@@ -2211,12 +2052,6 @@
         document.getElementById('filter-db').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') loadBackups();
         });
-        const cronInput = document.getElementById('backup-cron');
-        if (cronInput) {
-            cronInput.addEventListener('input', updateCronPreview);
-            cronInput.addEventListener('blur', updateCronPreview);
-            updateCronPreview();
-        }
         const jobCronInput = document.getElementById('job-cron');
         if (jobCronInput) {
             const updateJobCronPreview = () => {
