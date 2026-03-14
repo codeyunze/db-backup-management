@@ -239,7 +239,7 @@
             padding: 8px;
         }
         #scheduled-tasks-table .col-name { width: 20%; }
-        #scheduled-tasks-table .col-plan-name { width: 20%; }
+        #scheduled-tasks-table .col-plan-name { width: 18%; }
         #scheduled-tasks-table .col-type { width: 8%; }
         #scheduled-tasks-table .col-cron { width: 14%; }
         #scheduled-tasks-table .col-last { width: 165px; min-width: 165px; }
@@ -406,7 +406,7 @@
                 数据备份
                 <span class="badge badge-primary">支持全量 / 增量</span>
             </div>
-            <div class="card-body">
+            <div class="card-body" style="display:none;">
                 <div class="form-row">
                     <div class="form-group" style="flex:2;">
                         <label>选择数据库实例信息</label>
@@ -1740,8 +1740,8 @@
                 name,
                 schedule,
                 backup_type: backupType,
-                tables: tables || undefined,
-                ignore_tables: ignore || undefined,
+                tables: tables || '',
+                ignore_tables: ignore || '',
                 clean_days: cleanDays,
                 enable_gzip: enableGzip
             };
