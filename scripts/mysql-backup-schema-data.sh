@@ -13,7 +13,7 @@ ROW_THRESHOLD=100000   # 超过该行数即拆分为多文件（可根据磁盘/
 CHUNK_SIZE=50000       # 每个数据文件最多包含的行数
 INSERT_BATCH=500       # 每个 INSERT 语句包含的行数（200~1000 为宜，过大可能触发 max_allowed_packet）
 
-# 是否对备份结果启用 gzip 压缩（0=关闭，1=开启，可通过 --gzip 打开）
+# 是否启用 gzip 压缩：1=边备份边压缩（流式 mysqldump | gzip，直接写 .sql.gz），0=不压缩
 ENABLE_GZIP=0
 
 # 日志：留空则使用本次备份目录下的 backup.log
@@ -45,7 +45,7 @@ show_usage() {
     echo "  -t, --tables      仅备份指定表，多个表用逗号分隔，如: -t user,order,product"
     echo "  -i, --ignore      不备份的表，多个表用逗号分隔；优先级高于 -t"
     echo "  -c, --clean       备份完成后清理 N 天前的旧备份，如: -c 10（不传则不清理）"
-    echo "      --gzip        启用 gzip 压缩，将生成的 .sql 压缩为 .sql.gz"
+    echo "      --gzip        启用 gzip 压缩，边备份边压缩（流式 mysqldump | gzip），直接生成 .sql.gz"
     echo "  -h, --help        显示此帮助"
     echo ""
     echo "示例:"
@@ -247,11 +247,15 @@ printf '{\n  "tables_include": "%s",\n  "tables_exclude": "%s"\n}\n' \
     "$(_esc_json "${TABLES_EXCLUDE:-}")" \
     > "${BACKUP_OPTIONS_JSON}"
 
-# 1. 备份每个基表的结构 (不含数据)，使用 mysqldump
+# 1. 备份每个基表的结构 (不含数据)，使用 mysqldump（启用 gzip 时边备份边压缩，避免先写 .sql 再压缩）
 echo "正在备份表结构..."
 for TABLE in ${TABLES}; do
     echo "  -> 备份表结构: ${TABLE}"
-    ${DUMP_CMD} --no-data "${DB_NAME}" "${TABLE}" > "${BACKUP_DIR}/schema/${TABLE}.sql"
+    if [ "${ENABLE_GZIP}" -eq 1 ]; then
+        ${DUMP_CMD} --no-data "${DB_NAME}" "${TABLE}" | gzip -9 > "${BACKUP_DIR}/schema/${TABLE}.sql.gz"
+    else
+        ${DUMP_CMD} --no-data "${DB_NAME}" "${TABLE}" > "${BACKUP_DIR}/schema/${TABLE}.sql"
+    fi
 done
 
 # 2. 备份视图结构：使用 SHOW CREATE VIEW 输出 DROP VIEW + CREATE VIEW（放在最后）
@@ -268,10 +272,11 @@ if [ -n "${VIEWS}" ]; then
                 | sed -E 's/^CREATE[[:space:]]+.*[[:space:]]+VIEW[[:space:]]+/CREATE VIEW /I')
             # 去掉当前数据库名作为前缀：`db_name`.`xxx` -> `xxx`，但保留表别名（例如 `u`.`id`）
             CREATESQL=$(echo "${CREATESQL}" | sed -E 's/`'"${DB_NAME}"'`\.//g')
-            {
-                echo "DROP VIEW IF EXISTS \`${VIEW}\`;"
-                echo "${CREATESQL};"
-            } > "${BACKUP_DIR}/schema/${VIEW}.sql"
+            if [ "${ENABLE_GZIP}" -eq 1 ]; then
+                { echo "DROP VIEW IF EXISTS \`${VIEW}\`;"; echo "${CREATESQL};"; } | gzip -9 > "${BACKUP_DIR}/schema/${VIEW}.sql.gz"
+            else
+                { echo "DROP VIEW IF EXISTS \`${VIEW}\`;"; echo "${CREATESQL};"; } > "${BACKUP_DIR}/schema/${VIEW}.sql"
+            fi
         else
             echo "  警告: 无法获取视图 ${VIEW} 的定义，跳过"
         fi
@@ -294,9 +299,13 @@ for TABLE in ${TABLES}; do
     fi
 
     if [ "${ROW_COUNT}" -le "${ROW_THRESHOLD}" ] 2>/dev/null; then
-        # 小表：单文件
+        # 小表：单文件（启用 gzip 时流式压缩，不落盘 .sql）
         echo "  -> 备份表数据: ${TABLE} (约 ${ROW_COUNT} 行, 单文件)"
-        ${DUMP_CMD} --no-create-info "${DB_NAME}" "${TABLE}" > "${BACKUP_DIR}/data/${TABLE}.sql"
+        if [ "${ENABLE_GZIP}" -eq 1 ]; then
+            ${DUMP_CMD} --no-create-info "${DB_NAME}" "${TABLE}" | gzip -9 > "${BACKUP_DIR}/data/${TABLE}.sql.gz"
+        else
+            ${DUMP_CMD} --no-create-info "${DB_NAME}" "${TABLE}" > "${BACKUP_DIR}/data/${TABLE}.sql"
+        fi
     else
         # 大表：尝试按主键 keyset 分页拆分（每次取实际有数据的批次，避免空文件）
         PK_COL=$(${MYSQL_CMD} -e "SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE \
@@ -328,12 +337,21 @@ for TABLE in ${TABLES}; do
                     fi
                     PAD=$(printf "%04d" "${PART}")
                     echo "  -> 备份表数据: ${TABLE} 第 ${PART} 部分 (${PK_COL} ${BATCH_MIN}~${BATCH_MAX})"
-                    ${DUMP_CMD} --no-create-info --where="${WHERE}" "${DB_NAME}" "${TABLE}" > "${BACKUP_DIR}/data/${TABLE}_${PAD}.sql"
-                    # 检查是否为有效数据文件（避免空文件）
-                    if [ ! -s "${BACKUP_DIR}/data/${TABLE}_${PAD}.sql" ] || ! grep -q "INSERT INTO" "${BACKUP_DIR}/data/${TABLE}_${PAD}.sql" 2>/dev/null; then
-                        rm -f "${BACKUP_DIR}/data/${TABLE}_${PAD}.sql"
-                        [ "${PART}" -eq 1 ] 2>/dev/null && PART=0
-                        break
+                    if [ "${ENABLE_GZIP}" -eq 1 ]; then
+                        ${DUMP_CMD} --no-create-info --where="${WHERE}" "${DB_NAME}" "${TABLE}" | gzip -9 > "${BACKUP_DIR}/data/${TABLE}_${PAD}.sql.gz"
+                        DATA_PART_FILE="${BACKUP_DIR}/data/${TABLE}_${PAD}.sql.gz"
+                        if [ ! -s "${DATA_PART_FILE}" ] || ! gzip -cd "${DATA_PART_FILE}" 2>/dev/null | grep -q "INSERT INTO" 2>/dev/null; then
+                            rm -f "${DATA_PART_FILE}"
+                            [ "${PART}" -eq 1 ] 2>/dev/null && PART=0
+                            break
+                        fi
+                    else
+                        ${DUMP_CMD} --no-create-info --where="${WHERE}" "${DB_NAME}" "${TABLE}" > "${BACKUP_DIR}/data/${TABLE}_${PAD}.sql"
+                        if [ ! -s "${BACKUP_DIR}/data/${TABLE}_${PAD}.sql" ] || ! grep -q "INSERT INTO" "${BACKUP_DIR}/data/${TABLE}_${PAD}.sql" 2>/dev/null; then
+                            rm -f "${BACKUP_DIR}/data/${TABLE}_${PAD}.sql"
+                            [ "${PART}" -eq 1 ] 2>/dev/null && PART=0
+                            break
+                        fi
                     fi
                     LAST_PK="${BATCH_MAX}"
                     PART=$((PART + 1))
@@ -345,7 +363,7 @@ for TABLE in ${TABLES}; do
             fi
         fi
 
-        # 无主键、主键非数值、或 keyset 分页失败：按行 dump 后拆分，并合并为多行 INSERT
+        # 无主键、主键非数值、或 keyset 分页失败：按行 dump 后拆分，并合并为多行 INSERT（拆分后若启用 gzip 则流式压缩为 .sql.gz）
         echo "  -> 备份表数据: ${TABLE} (约 ${ROW_COUNT} 行, 按行拆分，每 INSERT ${INSERT_BATCH} 行)"
         TEMP_FILE="${BACKUP_DIR}/data/${TABLE}.tmp.sql"
         ${DUMP_CMD} --no-create-info --extended-insert=false "${DB_NAME}" "${TABLE}" > "${TEMP_FILE}"
@@ -355,29 +373,57 @@ for TABLE in ${TABLES}; do
         for F in "${BACKUP_DIR}/data/${TABLE}_"[0-9]*; do
             [ -f "${F}" ] || continue
             # 将单行 INSERT 合并为多行 INSERT（每 INSERT_BATCH 行一个 INSERT）
-            awk -v batch="${INSERT_BATCH}" '
-                /^INSERT INTO/ {
-                    pos = index($0, "VALUES ")
-                    if (pos > 0) {
-                        rest = substr($0, pos + 7)
-                        sub(/;[[:space:]]*$/, "", rest)
-                        if (rest != "" && substr(rest, 1, 1) == "(") {
-                            vals = rest
-                            if (n == 0) prefix = substr($0, 1, pos + 6)
-                            buf = (buf == "" ? vals : buf "," vals)
-                            n++
-                            if (n >= batch) {
-                                print prefix buf ";"
-                                buf = ""; n = 0
+            if [ "${ENABLE_GZIP}" -eq 1 ]; then
+                awk -v batch="${INSERT_BATCH}" '
+                    /^INSERT INTO/ {
+                        pos = index($0, "VALUES ")
+                        if (pos > 0) {
+                            rest = substr($0, pos + 7)
+                            sub(/;[[:space:]]*$/, "", rest)
+                            if (rest != "" && substr(rest, 1, 1) == "(") {
+                                vals = rest
+                                if (n == 0) prefix = substr($0, 1, pos + 6)
+                                buf = (buf == "" ? vals : buf "," vals)
+                                n++
+                                if (n >= batch) {
+                                    print prefix buf ";"
+                                    buf = ""; n = 0
+                                }
                             }
                         }
                     }
-                }
-                END { if (n > 0 && prefix != "") print prefix buf ";" }
-            ' "${F}" > "${F}.merged" && mv "${F}.merged" "${F}"
-            mv "${F}" "${F}.sql"
+                    END { if (n > 0 && prefix != "") print prefix buf ";" }
+                ' "${F}" | gzip -9 > "${F}.sql.gz"
+                rm -f "${F}"
+            else
+                awk -v batch="${INSERT_BATCH}" '
+                    /^INSERT INTO/ {
+                        pos = index($0, "VALUES ")
+                        if (pos > 0) {
+                            rest = substr($0, pos + 7)
+                            sub(/;[[:space:]]*$/, "", rest)
+                            if (rest != "" && substr(rest, 1, 1) == "(") {
+                                vals = rest
+                                if (n == 0) prefix = substr($0, 1, pos + 6)
+                                buf = (buf == "" ? vals : buf "," vals)
+                                n++
+                                if (n >= batch) {
+                                    print prefix buf ";"
+                                    buf = ""; n = 0
+                                }
+                            }
+                        }
+                    }
+                    END { if (n > 0 && prefix != "") print prefix buf ";" }
+                ' "${F}" > "${F}.merged" && mv "${F}.merged" "${F}"
+                mv "${F}" "${F}.sql"
+            fi
         done
-        echo "${TABLE}_*.sql" > "${BACKUP_DIR}/data/.${TABLE}.split"
+        if [ "${ENABLE_GZIP}" -eq 1 ]; then
+            echo "${TABLE}_*.sql.gz" > "${BACKUP_DIR}/data/.${TABLE}.split"
+        else
+            echo "${TABLE}_*.sql" > "${BACKUP_DIR}/data/.${TABLE}.split"
+        fi
     fi
 done
 
@@ -387,21 +433,7 @@ if [ -f "${BINLOG_META_TMP}" ]; then
     mv "${BINLOG_META_TMP}" "${BACKUP_DIR}/meta/tables-binlog.json"
 fi
 
-# 若启用 gzip，则在备份完成后统一压缩 schema/ 与 data/ 目录下的 .sql 文件为 .sql.gz
-if [ "${ENABLE_GZIP}" -eq 1 ]; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 正在对备份文件进行 gzip 压缩..."
-    # 压缩表结构
-    find "${BACKUP_DIR}/schema" -type f -name '*.sql' -print0 2>/dev/null | while IFS= read -r -d '' f; do
-        [ -f "${f}" ] || continue
-        gzip -9 "${f}"
-    done
-    # 压缩表数据
-    find "${BACKUP_DIR}/data" -type f -name '*.sql' -print0 2>/dev/null | while IFS= read -r -d '' f; do
-        [ -f "${f}" ] || continue
-        gzip -9 "${f}"
-    done
-fi
-
+# 启用 gzip 时已在备份时边备份边压缩（流式 mysqldump | gzip），此处无需再压缩
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 备份完成！"
 echo "备份目录: ${BACKUP_DIR}"
 echo "  - 表结构: ${BACKUP_DIR}/schema/"

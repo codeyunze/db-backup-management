@@ -277,17 +277,20 @@ fi
 echo "1. 正在创建新数据库 '${NEW_DB_NAME}'..."
 ${MYSQL_CMD} -e "CREATE DATABASE IF NOT EXISTS \`${NEW_DB_NAME}\`;"
 
-# 2. 获取待恢复表/视图列表
+# 2. 获取待恢复表/视图列表（兼容仅存在 .sql 或仅存在 .sql.gz 的备份）
 if [ -n "${TARGET_TABLES}" ]; then
     TABLES_TO_RESTORE="${TARGET_TABLES}"
 else
     TABLES_TO_RESTORE=""
-    for schema_file in "${BACKUP_DIR}"/schema/*.sql; do
+    for schema_file in "${BACKUP_DIR}"/schema/*.sql "${BACKUP_DIR}"/schema/*.sql.gz; do
         [ -f "${schema_file}" ] || continue
-        name=$(basename "${schema_file}" .sql)
+        name=$(basename "${schema_file}")
+        name="${name%.sql.gz}"
+        name="${name%.sql}"
         [ "${name}" = ".views" ] && continue
         TABLES_TO_RESTORE="${TABLES_TO_RESTORE} ${name}"
     done
+    TABLES_TO_RESTORE=$(echo "${TABLES_TO_RESTORE}" | tr ' ' '\n' | sort -u | tr '\n' ' ')
 fi
 
 # 应用 -i 排除：从 TABLES_TO_RESTORE 中移除 IGNORE_TABLES 中的表/视图
