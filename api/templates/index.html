@@ -252,6 +252,36 @@
             color: #8c959f;
             font-size: 0.9rem;
         }
+        .job-plan-info-box {
+            padding: 8px 12px;
+            background: #f6f8fa;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            color: #24292f;
+        }
+        .job-plan-info-box table.job-plan-info-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+        .job-plan-info-box table.job-plan-info-table th {
+            text-align: left;
+            font-weight: 600;
+            color: #57606a;
+            padding: 4px 12px 4px 0;
+            width: 1%;
+            white-space: nowrap;
+        }
+        .job-plan-info-box table.job-plan-info-table td {
+            padding: 4px 16px 4px 0;
+            max-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .job-plan-info-box table.job-plan-info-table tr + tr th,
+        .job-plan-info-box table.job-plan-info-table tr + tr td {
+            padding-top: 6px;
+        }
         .actions { display: flex; gap: 8px; align-items: center; }
         .expandable {
             max-height: 0;
@@ -338,6 +368,35 @@
                     <tbody id="plans-tbody"></tbody>
                 </table>
                 <div id="plans-empty" class="empty-state" style="display:none;">暂无已保存的备份计划</div>
+            </div>
+        </div>
+
+        <!-- 任务调度 -->
+        <div class="card">
+            <div class="card-header collapsible-header">
+                <span>任务调度</span>
+                <span>
+                    <button class="btn btn-secondary btn-sm" onclick="loadScheduledTasks()">刷新</button>
+                    <button class="btn btn-primary btn-sm" onclick="openJobModal(null)">新增</button>
+                </span>
+            </div>
+            <div class="card-body">
+                <table id="scheduled-tasks-table">
+                    <thead>
+                        <tr>
+                            <th class="col-name">任务名称</th>
+                            <th class="col-plan-name">实例名称</th>
+                            <th class="col-type">备份类型</th>
+                            <th class="col-cron">调度策略</th>
+                            <th class="col-last">上次执行时间</th>
+                            <th class="col-next">下次执行时间</th>
+                            <th class="col-status">状态</th>
+                            <th class="col-actions">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="scheduled-tasks-tbody"></tbody>
+                </table>
+                <div id="scheduled-tasks-empty" class="empty-state" style="display:none;">暂无定时任务</div>
             </div>
         </div>
 
@@ -519,35 +578,6 @@
             </div>
         </div>
 
-        <!-- 任务调度 -->
-        <div class="card">
-            <div class="card-header collapsible-header">
-                <span>任务调度</span>
-                <span>
-                    <button class="btn btn-secondary btn-sm" onclick="loadScheduledTasks()">刷新</button>
-                    <button class="btn btn-primary btn-sm" onclick="openJobModal(null)">新增</button>
-                </span>
-            </div>
-            <div class="card-body">
-                <table id="scheduled-tasks-table">
-                    <thead>
-                        <tr>
-                            <th class="col-name">任务名称</th>
-                            <th class="col-plan-name">实例名称</th>
-                            <th class="col-type">备份类型</th>
-                            <th class="col-cron">调度策略</th>
-                            <th class="col-last">上次执行时间</th>
-                            <th class="col-next">下次执行时间</th>
-                            <th class="col-status">状态</th>
-                            <th class="col-actions">操作</th>
-                        </tr>
-                    </thead>
-                    <tbody id="scheduled-tasks-tbody"></tbody>
-                </table>
-                <div id="scheduled-tasks-empty" class="empty-state" style="display:none;">暂无定时任务</div>
-            </div>
-        </div>
-
         <!-- 备份列表 -->
         <div class="card">
             <div class="card-header collapsible-header">
@@ -684,7 +714,7 @@
                     <div id="job-plan-info-wrap" class="form-row" style="display:none;">
                         <div class="form-group" style="flex:1;">
                             <label style="margin-bottom:4px;">当前实例信息</label>
-                            <div id="job-plan-info" style="padding:8px 12px;background:#f6f8fa;border-radius:6px;font-size:0.85rem;color:#24292f;"></div>
+                            <div id="job-plan-info" class="job-plan-info-box"></div>
                         </div>
                     </div>
                     <div class="form-row">
@@ -1570,7 +1600,7 @@
                 nameEl.value = '';
                 cronEl.value = '';
                 typeEl.value = 'full';
-                gzipEl.checked = false;
+                gzipEl.checked = true;
                 tablesEl.value = '';
                 ignoreEl.value = '';
                 cleanEl.value = 0;
@@ -1590,31 +1620,29 @@
             }
             wrap.style.display = 'flex';
             infoEl.textContent = '加载中...';
+            const escHtml = s => ('' + (s ?? '')).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            function renderPlanTable(p) {
+                const name = escHtml(p.name || '');
+                const host = escHtml(p.host || '');
+                const port = escHtml((p.port != null && p.port !== '') ? String(p.port) : '');
+                const user = escHtml(p.user || '');
+                const database = escHtml(p.database || '');
+                const backupDir = escHtml(p.backup_dir || '/data/backup/mysql');
+                return '<table class="job-plan-info-table">' +
+                    '<tr><th>实例名称</th><td>' + name + '</td><th>主机</th><td>' + host + '</td><th>端口</th><td>' + port + '</td></tr>' +
+                    '<tr><th>用户名</th><td>' + user + '</td><th>数据库</th><td>' + database + '</td><th>备份目录</th><td>' + backupDir + '</td></tr>' +
+                    '</table>';
+            }
             try {
                 const r = await fetch('/backup-plans/' + encodeURIComponent(planId));
                 const j = await r.json().catch(() => ({}));
                 if (r.ok && j.code === 200 && j.data) {
-                    const p = j.data;
-                    const parts = [];
-                    if (p.name) parts.push('实例名称: ' + p.name);
-                    if (p.host) parts.push('主机: ' + p.host);
-                    if (p.port != null && p.port !== '') parts.push('端口: ' + p.port);
-                    if (p.user) parts.push('用户名: ' + p.user);
-                    if (p.database) parts.push('数据库: ' + p.database);
-                    if (p.backup_dir) parts.push('备份目录: ' + p.backup_dir);
-                    infoEl.textContent = parts.length ? parts.join('　') : '无详情';
+                    infoEl.innerHTML = renderPlanTable(j.data);
                 } else {
                     const fromCache = (window._backupPlansCache || []).find(x => (x.id || '') === planId);
                     if (fromCache) {
-                        const p = fromCache;
-                        const parts = [];
-                        if (p.name) parts.push('实例名称: ' + p.name);
-                        if (p.host) parts.push('主机: ' + p.host);
-                        if (p.port != null && p.port !== '') parts.push('端口: ' + p.port);
-                        if (p.user) parts.push('用户名: ' + p.user);
-                        if (p.database) parts.push('数据库: ' + p.database);
-                        if (p.backup_dir) parts.push('备份目录: ' + (p.backup_dir || '/data/backup/mysql'));
-                        infoEl.textContent = parts.length ? parts.join('　') : '无详情';
+                        const p = { ...fromCache, backup_dir: fromCache.backup_dir || '/data/backup/mysql' };
+                        infoEl.innerHTML = renderPlanTable(p);
                     } else {
                         infoEl.textContent = '无法加载实例信息';
                     }
