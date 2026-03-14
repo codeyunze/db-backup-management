@@ -205,6 +205,7 @@
         }
         .col-time {
             width: 165px;
+            min-width: 165px;
             white-space: nowrap;
         }
         .col-size {
@@ -237,12 +238,12 @@
             white-space: nowrap;
             padding: 8px;
         }
-        #scheduled-tasks-table .col-name { width: 14%; }
-        #scheduled-tasks-table .col-plan-name { width: 12%; }
+        #scheduled-tasks-table .col-name { width: 20%; }
+        #scheduled-tasks-table .col-plan-name { width: 20%; }
         #scheduled-tasks-table .col-type { width: 8%; }
         #scheduled-tasks-table .col-cron { width: 14%; }
-        #scheduled-tasks-table .col-last { width: 12%; }
-        #scheduled-tasks-table .col-next { width: 12%; }
+        #scheduled-tasks-table .col-last { width: 165px; min-width: 165px; }
+        #scheduled-tasks-table .col-next { width: 165px; min-width: 165px; }
         #scheduled-tasks-table .col-status { width: 6%; }
         #scheduled-tasks-table .col-actions { width: 22%; min-width: 180px; }
         .empty-state {
@@ -1329,11 +1330,7 @@
                         const jobId = btn.dataset.jobId;
                         const item = items.find(x => x.id === jobId && x.plan_id === planId);
                         if (!item) return;
-                        const newName = prompt('请输入调度任务名称：', item.name || '');
-                        if (newName === null) return;
-                        const newCron = prompt('请输入 cron 表达式：', item.cron_expr || item.schedule || '');
-                        if (newCron === null) return;
-                        updateJob(planId, jobId, { name: newName.trim(), schedule: newCron.trim() });
+                        openJobModal(item);
                     };
                 });
                 tbody.querySelectorAll('.btn-job-run').forEach(btn => {
