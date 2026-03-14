@@ -2,7 +2,7 @@
 
 包含 MySQL 备份/还原脚本的 Docker 镜像，内置 mysql、mysqldump、Python3，提供 HTTP API 接口。
 
-![image-20260306193234070](docs/images/image-20260306193234070.png)
+![image-20260314162628225](docs/images/image-20260314162628225.png)
 
 
 ## 运行服务
@@ -34,14 +34,28 @@ docker run -d -p 8081:8081 \
 ### Web 管理界面
 
 访问 `http://localhost:8081/` 可使用可视化界面：
-- **新建备份**：支持 **全量备份** 与 **增量备份** 两种模式  
-  - 全量备份：对单个数据库按表进行一次完整备份  
-  - 增量备份：基于某次全量备份，按 binlog 位点生成从“上一次备份结束”到“当前”的变更 SQL，形成连续的增量链
+
+- **数据备份**  
+  - 支持 **全量备份** 与 **增量备份** 两种模式  
+    - 全量备份：对单个数据库按表进行一次完整备份  
+    - 增量备份：基于某次全量备份，按 binlog 位点生成从“上一次备份结束”到“当前”的变更 SQL，形成连续的增量链  
+  - 支持按表白名单 / 黑名单过滤、自动清理 N 天前旧备份、可选 gzip 压缩（支持边备份边压缩，直接生成 `.sql.gz`）
 - **备份列表**：查看已有全量备份，支持按数据库名筛选，并可查看其后续增量备份列表
 - **数据还原**：  
   - 仅选全量目录：执行全量还原  
   - 同时选全量目录和增量目录：自动执行“全量 + 从第一个增量到所选增量（含）的所有增量”组合还原  
   - 出于 binlog 还原语义限制，**增量还原目前仅支持还原到与备份时相同的数据库名**（UI 会在库名不一致时禁用“执行还原”按钮并给出提示）
+- **数据库实例信息**（新增）  
+  - 集中管理多套数据库连接配置（名称、主机、端口、用户名、密码、数据库名），保存在 `backup-plans.json` 中  
+  - 在“数据备份”“数据还原”中可通过下拉框选择实例，一键带出连接信息，无需重复填写  
+  - 支持实例级“测试连接”，删除实例前会检查是否仍存在关联定时任务
+- **任务调度**（新增）  
+  - 基于某条“数据库实例信息”配置定时全量备份任务（备份类型、表过滤、清理天数、是否 gzip、cron 表达式等）  
+  - 状态支持“运行/停止”，运行中由容器内 cron + `mysql-backup-schema-data.sh` 自动按点执行备份  
+  - 支持在 UI 中新增 / 编辑 / 运行 / 停止 / 删除任务，并查看单任务运行日志  
+  - 所有调度任务以 `jobs` 字段存储在 `backup-plans.json` 中；运行态会在 `/data/backup/mysql/jobs/` 下生成对应 `job_xxx.sh`，并在 `/data/backup/mysql/job-logs/` 下记录触发日志与脚本输出  
+
+> 关于“数据库实例信息”和“任务调度”的完整介绍与截图，可参考 `docs/backup-tool-share-instance-and-schedule.md`。
 
 
 ## 自行构建镜像
@@ -156,6 +170,108 @@ curl "http://localhost:8081/db/backups?database=mall"
 
 ```bash
 curl -X DELETE "http://localhost:8081/db/backups/mall_20250209_020000"
+```
+
+**GET /db/backups/<dir_name>/log** - 获取某次备份的备份/还原日志（前端用于“备份日志/还原日志”弹窗）
+
+```bash
+curl "http://localhost:8081/db/backups/mall_20260302_222859/log?type=backup"
+curl "http://localhost:8081/db/backups/mall_20260302_222859/log?type=restore"
+```
+
+---
+
+### HTTP 接口：数据库实例信息与任务调度
+
+**GET /backup-plans** - 列出所有数据库实例信息（不返回密码）
+
+```bash
+curl "http://localhost:8081/backup-plans"
+```
+
+**POST /backup-plans** - 新增数据库实例信息
+
+```bash
+curl -X POST http://localhost:8081/backup-plans \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "mall-dev",
+    "host": "43.138.193.177",
+    "port": 3306,
+    "user": "root",
+    "password": "密码",
+    "database": "mall",
+    "backup_dir": "/data/backup/mysql"
+  }'
+```
+
+**GET /backup-plans/<plan_id>** - 获取单个实例详情（包含密码，供前端填充表单）
+
+```bash
+curl "http://localhost:8081/backup-plans/plan_1773382601991"
+```
+
+**PUT /backup-plans/<plan_id>** - 更新实例信息（仅连接相关字段）
+
+```bash
+curl -X PUT http://localhost:8081/backup-plans/plan_1773382601991 \
+  -H "Content-Type: application/json" \
+  -d '{ "host": "127.0.0.1", "port": 3307 }'
+```
+
+**DELETE /backup-plans/<plan_id>** - 删除实例（若仍存在 jobs 会返回 400 并拒绝删除）
+
+```bash
+curl -X DELETE "http://localhost:8081/backup-plans/plan_1773382601991"
+```
+
+**POST /backup-plans/<plan_id>/jobs** - 在某实例下新增一条定时备份任务
+
+```bash
+curl -X POST http://localhost:8081/backup-plans/plan_1773382601991/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "每天凌晨1点全量备份mall数据库",
+    "schedule": "0 1 * * *",
+    "backup_type": "full",
+    "tables": "",
+    "ignore_tables": "",
+    "clean_days": 0,
+    "enable_gzip": true,
+    "enabled": false
+  }'
+```
+
+**PUT /backup-plans/<plan_id>/jobs/<job_id>** - 更新定时任务（名称、cron、表过滤、清理天数、gzip、enabled 等）
+
+```bash
+curl -X PUT http://localhost:8081/backup-plans/plan_1773382601991/jobs/job_1773394757637 \
+  -H "Content-Type: application/json" \
+  -d '{ "schedule": "0 2 * * *", "enabled": true }'
+```
+
+**DELETE /backup-plans/<plan_id>/jobs/<job_id>** - 删除定时任务（运行中任务不允许删除）
+
+```bash
+curl -X DELETE "http://localhost:8081/backup-plans/plan_1773382601991/jobs/job_1773394757637"
+```
+
+**GET /scheduled-tasks** - 查询所有定时备份任务列表（聚合自 `backup-plans.json` 中的 `plans[].jobs[]`）
+
+```bash
+curl "http://localhost:8081/scheduled-tasks"
+```
+
+**GET /scheduled-tasks/<job_id>/log** - 查看指定任务的合并日志（元事件 + 运行输出）
+
+```bash
+curl "http://localhost:8081/scheduled-tasks/job_1773394757637/log"
+```
+
+**GET /db/backup-options** - 查询某次全量备份的表过滤条件（供增量备份 UI 继承）
+
+```bash
+curl "http://localhost:8081/db/backup-options?full_backup_dir=/data/backup/mysql/mall_20260302_222859"
 ```
 
 **GET /health** - 健康检查
