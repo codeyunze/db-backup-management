@@ -95,6 +95,41 @@ def _save_backup_plans(plans):
     os.replace(tmp_path, path)
 
 
+def _append_full_backup_file_record(plans, plan_id: str, job_id: str, backup_name: str, backup_dir: str, backup_time: str) -> None:
+    """
+    在内存中的 plans 结构上，为指定的全量 job 追加一条 backup_files 记录（最多保留 20 条）。
+    调用方负责在修改后调用 _save_backup_plans。
+    """
+    try:
+        for p in plans:
+            if p.get("id") != plan_id:
+                continue
+            jobs = p.get("jobs") or []
+            if not isinstance(jobs, list):
+                jobs = []
+                p["jobs"] = jobs
+            for j in jobs:
+                if j.get("id") != job_id:
+                    continue
+                if (j.get("backup_type") or "full") != "full":
+                    return
+                entry = {
+                    "backup_name": backup_name,
+                    "backup_dir": backup_dir,
+                    "backup_time": backup_time,
+                }
+                lst = j.get("backup_files") or []
+                if not isinstance(lst, list):
+                    lst = []
+                lst.insert(0, entry)
+                if len(lst) > 20:
+                    lst = lst[:20]
+                j["backup_files"] = lst
+                return
+    except Exception:
+        return
+
+
 def _generate_plan_id():
     """
     简单生成一个字符串 ID（避免额外依赖 uuid 库）。
@@ -522,6 +557,12 @@ def create_backup_job(plan_id):
                         "%Y-%m-%d %H:%M:%S", time.localtime()
                     ),
                 }
+                if backup_type == "full":
+                    job["backup_files"] = []
+                elif backup_type == "incremental":
+                    linked_full_id = (data.get("linked_full_backup_job_id") or "").strip()
+                    if linked_full_id:
+                        job["linked_full_backup_job_id"] = linked_full_id
                 jobs.append(job)
                 p["jobs"] = jobs
                 _append_job_log(
@@ -665,24 +706,30 @@ def list_scheduled_tasks():
                 enabled = j.get("enabled")
                 if enabled is None:
                     enabled = True
-                items.append(
-                    {
-                        "id": j_id,
-                        "name": job_name or plan_name,
-                        "plan_id": plan_id,
-                        "plan_name": plan_name,
-                        "database": database,
-                        "backup_type": backup_type,
-                        "cron_expr": schedule,
-                        "schedule": schedule,
-                        "clean_days": clean_days,
-                        "enable_gzip": enable_gzip,
-                        "created_at": created_at,
-                        "last_run_at": "-",
-                        "next_run_at": "-",
-                        "enabled": enabled,
-                    }
-                )
+                item = {
+                    "id": j_id,
+                    "name": job_name or plan_name,
+                    "plan_id": plan_id,
+                    "plan_name": plan_name,
+                    "database": database,
+                    "backup_type": backup_type,
+                    "cron_expr": schedule,
+                    "schedule": schedule,
+                    "clean_days": clean_days,
+                    "enable_gzip": enable_gzip,
+                    "created_at": created_at,
+                    "last_run_at": "-",
+                    "next_run_at": "-",
+                    "enabled": enabled,
+                }
+                if backup_type == "incremental":
+                    lf = j.get("linked_full_backup_job_id")
+                    if lf:
+                        item["linked_full_backup_job_id"] = lf
+                elif backup_type == "full":
+                    bf_list = j.get("backup_files") or []
+                    item["backup_files"] = bf_list
+                items.append(item)
         return jsonify({"code": 200, "msg": "ok", "data": {"items": items}}), 200
     except Exception as e:
         return jsonify({"code": 500, "msg": str(e), "data": {"items": []}}), 500
@@ -692,7 +739,7 @@ def list_scheduled_tasks():
 def update_backup_job(plan_id, job_id):
     """
     更新指定备份计划下的一条定时任务。
-    可更新字段：name, schedule, backup_type, tables, ignore_tables, clean_days, enable_gzip, enabled。
+    可更新字段：name, schedule, backup_type, tables, ignore_tables, clean_days, enable_gzip, enabled, linked_full_backup_job_id。
     """
     try:
         data = request.get_json() or {}
@@ -720,6 +767,7 @@ def update_backup_job(plan_id, job_id):
                     "clean_days",
                     "enable_gzip",
                     "enabled",
+                    "linked_full_backup_job_id",
                 ]:
                     if key in data and data[key] is not None:
                         if key == "clean_days":
