@@ -199,6 +199,62 @@ def _notify_full_backup_completed(plan_id: str, job_id: str, backup_name: str, b
         return
 
 
+def _rebuild_backup_files_for_full_job(plan: dict, job: dict, max_count: int = 20) -> bool:
+    """
+    回填/重建全量任务的 backup_files：
+    - 按当前 BACKUP_ROOT 扫描该实例 database 对应的备份目录；
+    - 按备份时间倒序取前 max_count 条，写入 job['backup_files']；
+    - 返回是否有更新发生（True=有更新并已写回 plan 结构，需调用 _save_backup_plans）。
+
+    这样即使早期 cron 未正确回调 full-backup 接口，也能在后端按需补齐 backup_files。
+    """
+    try:
+        db_name = (plan.get("database") or "").strip()
+        backup_root = (plan.get("backup_dir") or BACKUP_ROOT).strip() or BACKUP_ROOT
+        if not db_name or not os.path.isdir(backup_root):
+            return False
+
+        entries = []
+        for name in os.listdir(backup_root):
+            path = os.path.join(backup_root, name)
+            if not os.path.isdir(path):
+                continue
+            m = BACKUP_DIR_PATTERN.match(name)
+            if not m:
+                continue
+            db, date_str, time_str = m.group(1), m.group(2), m.group(3)
+            if db != db_name:
+                continue
+            backup_time = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]} {time_str[:2]}:{time_str[2:4]}:{time_str[4:6]}"
+            entries.append(
+                {
+                    "backup_name": name,
+                    "backup_dir": path,
+                    "backup_time": backup_time,
+                }
+            )
+
+        if not entries:
+            return False
+
+        # 按时间倒序，最多保留 max_count 条
+        entries.sort(key=lambda x: x["backup_time"], reverse=True)
+        new_list = entries[:max_count]
+
+        # 若已有 backup_files，则只有在内容不同的情况下才更新
+        old_list = job.get("backup_files") or []
+        if isinstance(old_list, list) and old_list == new_list:
+            return False
+
+        job["backup_files"] = new_list
+        # 同步最近一次执行时间为最新一条的 backup_time（仅在没有 last_run_at 时回填）
+        if not job.get("last_run_at") and new_list:
+            job["last_run_at"] = new_list[0].get("backup_time")
+        return True
+    except Exception:
+        return False
+
+
 @app.route("/internal/jobs/<job_id>/<plan_id>/full-backup", methods=["POST"])
 def internal_full_backup_callback(job_id, plan_id):
     """
@@ -963,6 +1019,7 @@ def list_scheduled_tasks():
     try:
         plans = _load_backup_plans()
         items = []
+        plans_dirty = False
         for p in plans:
             plan_id = p.get("id")
             plan_name = p.get("name") or ""
@@ -1003,9 +1060,16 @@ def list_scheduled_tasks():
                     if lf:
                         item["linked_full_backup_job_id"] = lf
                 elif backup_type == "full":
+                    # 若 backup_files 为空，尝试根据当前备份目录结构回填
                     bf_list = j.get("backup_files") or []
+                    if not bf_list:
+                        if _rebuild_backup_files_for_full_job(p, job):
+                            plans_dirty = True
+                            bf_list = job.get("backup_files") or []
                     item["backup_files"] = bf_list
                 items.append(item)
+        if plans_dirty:
+            _save_backup_plans(plans)
         return jsonify({"code": 200, "msg": "ok", "data": {"items": items}}), 200
     except Exception as e:
         return jsonify({"code": 500, "msg": str(e), "data": {"items": []}}), 500
