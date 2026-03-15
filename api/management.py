@@ -130,6 +130,61 @@ def _append_full_backup_file_record(plans, plan_id: str, job_id: str, backup_nam
         return
 
 
+def _notify_full_backup_completed(plan_id: str, job_id: str, backup_name: str, backup_dir: str, backup_time: str) -> None:
+    """
+    供内部调用：在备份脚本或 API 得知全量备份成功后，更新 backup-plans.json 中对应 job 的 backup_files。
+    """
+    try:
+        plans = _load_backup_plans()
+        _append_full_backup_file_record(
+            plans,
+            plan_id=plan_id,
+            job_id=job_id,
+            backup_name=backup_name,
+            backup_dir=backup_dir,
+            backup_time=backup_time,
+        )
+        _save_backup_plans(plans)
+    except Exception:
+        return
+
+
+@app.route("/internal/jobs/<plan_id>/<job_id>/full-backup", methods=["POST"])
+def internal_full_backup_callback(plan_id, job_id):
+    """
+    内部回调接口：由定时全量备份脚本在成功完成备份后调用，用于记录 backup_files。
+
+    请求体 JSON：
+    - backup_name: 备份目录名（可选，缺省时从 backup_dir 的 basename 推导）
+    - backup_dir: 备份目录绝对路径（必填）
+    - backup_time: 备份完成时间字符串（可选，缺省为当前时间）
+    """
+    try:
+        data = request.get_json() or {}
+        backup_dir = (data.get("backup_dir") or "").strip()
+        if not backup_dir:
+            return jsonify({"code": 400, "msg": "缺少 backup_dir", "data": None}), 400
+        backup_name = (data.get("backup_name") or "").strip() or os.path.basename(backup_dir.rstrip("/"))
+        if not backup_name:
+            return jsonify({"code": 400, "msg": "无法确定 backup_name", "data": None}), 400
+        backup_time = (data.get("backup_time") or "").strip()
+        if not backup_time:
+            import time as _time
+
+            backup_time = _time.strftime("%Y-%m-%d %H:%M:%S", _time.localtime())
+
+        _notify_full_backup_completed(
+            plan_id=plan_id,
+            job_id=job_id,
+            backup_name=backup_name,
+            backup_dir=backup_dir,
+            backup_time=backup_time,
+        )
+        return jsonify({"code": 200, "msg": "ok", "data": None}), 200
+    except Exception as e:
+        return jsonify({"code": 500, "msg": str(e), "data": None}), 500
+
+
 def _generate_plan_id():
     """
     简单生成一个字符串 ID（避免额外依赖 uuid 库）。
@@ -270,11 +325,19 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
                 else plan.get("enable_gzip") or False
             )
 
-            # 生成单独的 job 执行脚本 job-logs/job_<id>.sh
+            backup_root = (plan.get("backup_dir") or BACKUP_ROOT).strip() or BACKUP_ROOT
+
+            # 生成单独的 job 执行脚本 jobs/job_<id>.sh
+            # 约定：全量任务成功后，从 backup_root 下按数据库名匹配最近一次备份目录，
+            # 再调用本服务的内部接口，写入 backup_files。
             script_lines = [
                 "#!/bin/bash",
                 f'echo "$(date +\'%Y-%m-%d %H:%M:%S\') 调度触发备份 job={job_id} plan={plan_id}" >> "{meta_log_path}"',
                 'PATH="/usr/local/bin:/usr/bin:/bin:$PATH"',
+                "",
+                f'BACKUP_ROOT="{backup_root}"',
+                f'DB_NAME="{database}"',
+                "",
                 "/scripts/mysql-backup-schema-data.sh "
                 + f"-H {host} -P {port} -u {user} -p \"{password}\" -d {database} "
                 + (f"--tables '{tables}' " if tables else "")
@@ -282,6 +345,19 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
                 + (f"--clean-days {clean_days} " if clean_days else "")
                 + ("--gzip " if enable_gzip else "")
                 + f'>> "{cron_log_path}" 2>&1',
+                "rc=$?",
+                'if [ "$rc" -eq 0 ]; then',
+                '  latest_dir=$(ls -1dt "${BACKUP_ROOT}/${DB_NAME}"_* 2>/dev/null | head -n 1)',
+                "  if [ -n \"$latest_dir\" ]; then",
+                "    backup_name=$(basename \"$latest_dir\")",
+                "    backup_time=$(date '+%Y-%m-%d %H:%M:%S')",
+                f"    curl -s -X POST 'http://127.0.0.1:8081/internal/jobs/{plan_id}/{job_id}/full-backup' "
+                + r"-H 'Content-Type: application/json' "
+                + r"-d '{\"backup_name\":\"'\"${backup_name}\"'\",\"backup_dir\":\"'\"${latest_dir}\"'\",\"backup_time\":\"'\"${backup_time}\"'\"}' "
+                + f'>> "{meta_log_path}" 2>&1 || true',
+                "  fi",
+                "fi",
+                "exit \"$rc\"",
                 "",
             ]
             try:
