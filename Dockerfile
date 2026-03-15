@@ -25,6 +25,7 @@ RUN apt-get update \
         tzdata \
         libaio1 \
         cron \
+        curl \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
     && echo "Asia/Shanghai" > /etc/timezone \

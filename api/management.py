@@ -480,70 +480,82 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
             plan = next((p for p in plans if p.get("id") == plan_id), None)
             if not plan:
                 return
-            host = (plan.get("host") or "").strip()
-            user = (plan.get("user") or "").strip()
-            password = plan.get("password") or ""
-            port = int(plan.get("port") or 3306)
-            database = (plan.get("database") or "").strip()
-            if not (host and user and database):
-                return
+
+            backup_type = (job.get("backup_type") or "full").strip() or "full"
 
             os.makedirs(JOB_LOGS_DIR, exist_ok=True)
             os.makedirs(JOB_SCRIPTS_DIR, exist_ok=True)
             cron_log_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.run.log")
             meta_log_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.log")
-            job_script_path = os.path.join(JOB_SCRIPTS_DIR, f"{job_id}.sh")
 
-            # tables/ignore_tables/clean_days/enable_gzip 以 job 为准，缺省回退到 plan
-            tables = (job.get("tables") or plan.get("tables") or "").strip()
-            ignore_tables = (job.get("ignore_tables") or plan.get("ignore_tables") or "").strip()
-            clean_days = int(job.get("clean_days") if job.get("clean_days") is not None else plan.get("clean_days") or 0)
-            enable_gzip = bool(
-                job.get("enable_gzip")
-                if job.get("enable_gzip") is not None
-                else plan.get("enable_gzip") or False
-            )
-            backup_root = (plan.get("backup_dir") or BACKUP_ROOT).strip() or BACKUP_ROOT
+            if backup_type == "incremental":
+                # 增量任务：由后端统一解析 full_backup_dir 并执行，cron 仅负责触发 HTTP 调用
+                new_lines.append(f"{CRON_MARK_PREFIX}{job_id} plan={plan_id}")
+                cmd = (
+                    f"{schedule} curl -s -X POST 'http://127.0.0.1:8081/internal/jobs/{job_id}/run' "
+                    f">> \"{meta_log_path}\" 2>&1"
+                )
+                new_lines.append(cmd)
+            else:
+                # 全量任务：继续直接调用 mysql-backup-schema-data.sh，成功后通过内部接口记录 backup_files
+                host = (plan.get("host") or "").strip()
+                user = (plan.get("user") or "").strip()
+                password = plan.get("password") or ""
+                port = int(plan.get("port") or 3306)
+                database = (plan.get("database") or "").strip()
+                if not (host and user and database):
+                    return
 
-            # 生成单独的 job 执行脚本 jobs/job_<id>.sh
-            # 在备份成功后，通过内部接口记录 backup_files（失败不会影响备份本身）。
-            script_lines = [
-                "#!/bin/bash",
-                f'echo "$(date +\'%Y-%m-%d %H:%M:%S\') 调度触发备份 job={job_id} plan={plan_id}" >> "{meta_log_path}"',
-                'PATH="/usr/local/bin:/usr/bin:/bin:$PATH"',
-                f'BACKUP_ROOT="{backup_root}"',
-                f'DB_NAME="{database}"',
-                "/scripts/mysql-backup-schema-data.sh "
-                + f"-H {host} -P {port} -u {user} -p \"{password}\" -d {database} "
-                + (f"--tables '{tables}' " if tables else "")
-                + (f"--ignore-tables '{ignore_tables}' " if ignore_tables else "")
-                + (f"-c {clean_days} " if clean_days else "")
-                + ("--gzip " if enable_gzip else "")
-                + f'>> "{cron_log_path}" 2>&1',
-                "rc=$?",
-                'if [ "$rc" -eq 0 ]; then',
-                '  latest_dir=$(ls -1dt "${BACKUP_ROOT}/${DB_NAME}"_* 2>/dev/null | head -n 1)',
-                '  if [ -n "$latest_dir" ]; then',
-                '    backup_name=$(basename "$latest_dir")',
-                "    backup_time=$(date '+%Y-%m-%d %H:%M:%S')",
-                f"    curl -s -X POST 'http://127.0.0.1:8081/internal/jobs/{plan_id}/{job_id}/full-backup' "
-                + r"-H 'Content-Type: application/json' "
-                + r"-d '{\"backup_name\":\"'\"${backup_name}\"'\",\"backup_dir\":\"'\"${latest_dir}\"'\",\"backup_time\":\"'\"${backup_time}\"'\"}' "
-                + f'>> "{meta_log_path}" 2>&1 || true',
-                "  fi",
-                "fi",
-                'exit "$rc"',
-                "",
-            ]
-            try:
-                with open(job_script_path, "w", encoding="utf-8") as sf:
-                    sf.write("\n".join(script_lines))
-                os.chmod(job_script_path, 0o755)
-            except Exception:
-                return
+                job_script_path = os.path.join(JOB_SCRIPTS_DIR, f"{job_id}.sh")
 
-            new_lines.append(f"{CRON_MARK_PREFIX}{job_id} plan={plan_id}")
-            new_lines.append(f"{schedule} sh \"{job_script_path}\"")
+                # tables/ignore_tables/clean_days/enable_gzip 以 job 为准，缺省回退到 plan
+                tables = (job.get("tables") or plan.get("tables") or "").strip()
+                ignore_tables = (job.get("ignore_tables") or plan.get("ignore_tables") or "").strip()
+                clean_days = int(job.get("clean_days") if job.get("clean_days") is not None else plan.get("clean_days") or 0)
+                enable_gzip = bool(
+                    job.get("enable_gzip")
+                    if job.get("enable_gzip") is not None
+                    else plan.get("enable_gzip") or False
+                )
+                backup_root = (plan.get("backup_dir") or BACKUP_ROOT).strip() or BACKUP_ROOT
+
+                script_lines = [
+                    "#!/bin/bash",
+                    f'echo "$(date +\'%Y-%m-%d %H:%M:%S\') 调度触发备份 job={job_id} plan={plan_id}" >> "{meta_log_path}"',
+                    'PATH="/usr/local/bin:/usr/bin:/bin:$PATH"',
+                    f'BACKUP_ROOT="{backup_root}"',
+                    f'DB_NAME="{database}"',
+                    "/scripts/mysql-backup-schema-data.sh "
+                    + f"-H {host} -P {port} -u {user} -p \"{password}\" -d {database} "
+                    + (f"--tables '{tables}' " if tables else "")
+                    + (f"--ignore-tables '{ignore_tables}' " if ignore_tables else "")
+                    + (f"-c {clean_days} " if clean_days else "")
+                    + ("--gzip " if enable_gzip else "")
+                    + f'>> "{cron_log_path}" 2>&1',
+                    "rc=$?",
+                    'if [ "$rc" -eq 0 ]; then',
+                    '  latest_dir=$(ls -1dt "${BACKUP_ROOT}/${DB_NAME}"_* 2>/dev/null | head -n 1)',
+                    '  if [ -n "$latest_dir" ]; then',
+                    '    backup_name=$(basename "$latest_dir")',
+                    "    backup_time=$(date '+%Y-%m-%d %H:%M:%S')",
+                    f"    curl -s -X POST 'http://127.0.0.1:8081/internal/jobs/{plan_id}/{job_id}/full-backup' "
+                    + r"-H 'Content-Type: application/json' "
+                    + r"-d '{\"backup_name\":\"'\"${backup_name}\"'\",\"backup_dir\":\"'\"${latest_dir}\"'\",\"backup_time\":\"'\"${backup_time}\"'\"}' "
+                    + f'>> "{meta_log_path}" 2>&1 || true',
+                    "  fi",
+                    "fi",
+                    'exit "$rc"',
+                    "",
+                ]
+                try:
+                    with open(job_script_path, "w", encoding="utf-8") as sf:
+                        sf.write("\n".join(script_lines))
+                    os.chmod(job_script_path, 0o755)
+                except Exception:
+                    return
+
+                new_lines.append(f"{CRON_MARK_PREFIX}{job_id} plan={plan_id}")
+                new_lines.append(f"{schedule} sh \"{job_script_path}\"")
 
         _write_crontab_lines(new_lines)
     except Exception:
@@ -1009,6 +1021,7 @@ def update_backup_job(plan_id, job_id):
                 old_enabled = bool(j.get("enabled", True))
                 old_schedule = j.get("schedule") or ""
                 old_name = j.get("name") or ""
+                old_backup_type = (j.get("backup_type") or "full").strip() or "full"
                 for key in [
                     "name",
                     "schedule",
@@ -1033,6 +1046,26 @@ def update_backup_job(plan_id, job_id):
                 new_enabled = bool(j.get("enabled", True))
                 new_schedule = j.get("schedule") or ""
                 new_name = j.get("name") or ""
+                new_backup_type = (j.get("backup_type") or "full").strip() or "full"
+
+                # 如果是全量任务且尝试禁用，检查是否有增量任务依赖
+                if old_backup_type == "full" and not new_enabled and old_enabled:
+                    for pp in plans:
+                        jobs_all = pp.get("jobs") or []
+                        if not isinstance(jobs_all, list):
+                            continue
+                        for jj in jobs_all:
+                            if (jj.get("backup_type") or "full") == "incremental" and (jj.get("linked_full_backup_job_id") or "") == job_id:
+                                return (
+                                    jsonify(
+                                        {
+                                            "code": 400,
+                                            "msg": "存在增量定时任务依赖该全量任务，请先调整或删除对应的增量任务。",
+                                            "data": None,
+                                        }
+                                    ),
+                                    400,
+                                )
                 # 记录状态/计划变更日志
                 if new_enabled != old_enabled:
                     _append_job_log(
@@ -1099,6 +1132,23 @@ def delete_backup_job(plan_id, job_id):
                         ),
                         400,
                     )
+                # 若这是全量任务，检查是否有增量任务依赖它
+                for pp in plans:
+                    jobs_all = pp.get("jobs") or []
+                    if not isinstance(jobs_all, list):
+                        continue
+                    for jj in jobs_all:
+                        if (jj.get("backup_type") or "full") == "incremental" and (jj.get("linked_full_backup_job_id") or "") == job_id:
+                            return (
+                                jsonify(
+                                    {
+                                        "code": 400,
+                                        "msg": "存在增量定时任务依赖该全量任务，请先调整或删除对应的增量任务。",
+                                        "data": None,
+                                    }
+                                ),
+                                400,
+                            )
                 p["jobs"] = new_jobs
                 _append_job_log(job_id, f"删除定时任务: plan_id={plan_id}")
                 break
@@ -1116,31 +1166,20 @@ def delete_backup_job(plan_id, job_id):
 @app.route("/scheduled-tasks/<job_id>/log", methods=["GET"])
 def get_scheduled_task_log(job_id):
     """
-    读取指定定时任务的日志：
-    - 元日志: job-logs/<job_id>.log（创建/更新/删除/触发记录）
-    - 运行日志: job-logs/<job_id>.run.log（备份脚本标准输出/错误）
+    读取指定定时任务的调度日志（仅元日志，不包含 run.log）：
+    - 元日志: job-logs/<job_id>.log（创建/更新/删除/触发记录等）
     """
     try:
         os.makedirs(JOB_LOGS_DIR, exist_ok=True)
         meta_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.log")
-        run_path = os.path.join(JOB_LOGS_DIR, f"{job_id}.run.log")
         meta = ""
-        run = ""
         if os.path.isfile(meta_path):
             with open(meta_path, "r", encoding="utf-8", errors="ignore") as f:
                 meta = f.read()
-        if os.path.isfile(run_path):
-            with open(run_path, "r", encoding="utf-8", errors="ignore") as f:
-                run = f.read()
-        if not meta and not run:
+        if not meta:
             content = "(暂无日志)"
         else:
-            parts = []
-            if meta:
-                parts.append("==== 元日志 (job.log) ====\n" + meta.rstrip())
-            if run:
-                parts.append("==== 运行日志 (job.run.log) ====\n" + run.rstrip())
-            content = "\n\n".join(parts)
+            content = meta.rstrip()
         return jsonify({"code": 200, "msg": "ok", "data": {"content": content}}), 200
     except Exception as e:
         return jsonify({"code": 500, "msg": str(e), "data": {"content": str(e)}}), 500
