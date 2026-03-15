@@ -608,10 +608,10 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
                     + ("--gzip " if enable_gzip else "")
                     + f'>> "{cron_log_path}" 2>&1',
                     "rc=$?",
-                    'if [ "$rc" -eq 0 ]; then',
-                    '  latest_dir=$(ls -1dt "${BACKUP_ROOT}/${DB_NAME}"_* 2>/dev/null | head -n 1)',
-                    '  if [ -n "$latest_dir" ]; then',
-                    '    backup_name=$(basename "$latest_dir")',
+                    'if [ \"$rc\" -eq 0 ]; then',
+                    '  latest_dir=$(ls -1dt \"${BACKUP_ROOT}/${DB_NAME}\"_* 2>/dev/null | head -n 1)',
+                    '  if [ -n \"$latest_dir\" ]; then',
+                    '    backup_name=$(basename \"$latest_dir\")',
                     "    backup_time=$(date '+%Y-%m-%d %H:%M:%S')",
                     "    curl -s -X POST "
                     f"\"http://127.0.0.1:8081/internal/jobs/{job_id}/{plan_id}/full-backup\" "
@@ -621,7 +621,7 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
                     + f'>> "{meta_log_path}" 2>&1 || true',
                     "  fi",
                     "fi",
-                    'exit "$rc"',
+                    'exit \"$rc\"',
                     "",
                 ]
                 try:
