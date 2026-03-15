@@ -125,6 +125,8 @@ def _append_full_backup_file_record(plans, plan_id: str, job_id: str, backup_nam
                 if len(lst) > 20:
                     lst = lst[:20]
                 j["backup_files"] = lst
+                # 同步记录最近一次执行时间
+                j["last_run_at"] = backup_time
                 return
     except Exception:
         return
@@ -197,8 +199,8 @@ def _notify_full_backup_completed(plan_id: str, job_id: str, backup_name: str, b
         return
 
 
-@app.route("/internal/jobs/<plan_id>/<job_id>/full-backup", methods=["POST"])
-def internal_full_backup_callback(plan_id, job_id):
+@app.route("/internal/jobs/<job_id>/<plan_id>/full-backup", methods=["POST"])
+def internal_full_backup_callback(job_id, plan_id):
     """
     内部回调接口：由定时全量备份脚本在成功完成备份后调用，用于记录 backup_files。
 
@@ -307,6 +309,12 @@ def internal_run_job(job_id):
             success, stdout, stderr, returncode = _run_script("mysql-backup-schema-data.sh", args)
 
             if success:
+                # 更新 last_run_at
+                import time as _time
+
+                now_str = _time.strftime("%Y-%m-%d %H:%M:%S", _time.localtime())
+                job["last_run_at"] = now_str
+                _save_backup_plans(plans)
                 _append_job_log(job_id, f"手动执行全量定时任务成功: plan_id={plan.get('id')}, database={database}")
                 return jsonify({
                     "code": 200,
@@ -348,6 +356,11 @@ def internal_run_job(job_id):
             resp, status = _handle_backup_incremental_core(data)
             # _handle_backup_incremental_core 返回的是 (Response,status_code)
             if status == 200:
+                import time as _time
+
+                now_str = _time.strftime("%Y-%m-%d %H:%M:%S", _time.localtime())
+                job["last_run_at"] = now_str
+                _save_backup_plans(plans)
                 _append_job_log(job_id, f"手动执行增量定时任务成功: plan_id={plan.get('id')}, database={database}, full_backup_dir={full_dir}")
             else:
                 _append_job_log(job_id, f"手动执行增量定时任务失败: plan_id={plan.get('id')}, database={database}, full_backup_dir={full_dir}")
@@ -538,7 +551,7 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
                     '  if [ -n "$latest_dir" ]; then',
                     '    backup_name=$(basename "$latest_dir")',
                     "    backup_time=$(date '+%Y-%m-%d %H:%M:%S')",
-                    f"    curl -s -X POST 'http://127.0.0.1:8081/internal/jobs/{plan_id}/{job_id}/full-backup' "
+                    f"    curl -s -X POST 'http://127.0.0.1:8081/internal/jobs/{job_id}/{plan_id}/full-backup' "
                     + r"-H 'Content-Type: application/json' "
                     + r"-d '{\"backup_name\":\"'\"${backup_name}\"'\",\"backup_dir\":\"'\"${latest_dir}\"'\",\"backup_time\":\"'\"${backup_time}\"'\"}' "
                     + f'>> "{meta_log_path}" 2>&1 || true',
@@ -981,7 +994,7 @@ def list_scheduled_tasks():
                     "clean_days": clean_days,
                     "enable_gzip": enable_gzip,
                     "created_at": created_at,
-                    "last_run_at": "-",
+                    "last_run_at": j.get("last_run_at") or "-",
                     "next_run_at": "-",
                     "enabled": enabled,
                 }
