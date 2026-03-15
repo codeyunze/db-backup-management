@@ -613,12 +613,11 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
                     '  if [ -n \"$latest_dir\" ]; then',
                     '    backup_name=$(basename \"$latest_dir\")',
                     "    backup_time=$(date '+%Y-%m-%d %H:%M:%S')",
-                    "    curl -s -X POST "
-                    f"\"http://127.0.0.1:8081/internal/jobs/{job_id}/{plan_id}/full-backup\" "
-                    + r"-d \"backup_name=${backup_name}\" "
-                    + r"-d \"backup_dir=${latest_dir}\" "
-                    + r"-d \"backup_time=${backup_time}\" "
-                    + f'>> "{meta_log_path}" 2>&1 || true',
+                    f'    curl -s -X POST "http://127.0.0.1:8081/internal/jobs/{job_id}/{plan_id}/full-backup" '
+                    f'-d "backup_name=${{backup_name}}" '
+                    f'-d "backup_dir=${{latest_dir}}" '
+                    f'-d "backup_time=${{backup_time}}" '
+                    f'>> "{meta_log_path}" 2>&1 || true',
                     "  fi",
                     "fi",
                     'exit \"$rc\"',
