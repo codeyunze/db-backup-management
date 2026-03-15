@@ -325,19 +325,12 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
                 else plan.get("enable_gzip") or False
             )
 
-            backup_root = (plan.get("backup_dir") or BACKUP_ROOT).strip() or BACKUP_ROOT
-
             # 生成单独的 job 执行脚本 jobs/job_<id>.sh
-            # 约定：全量任务成功后，从 backup_root 下按数据库名匹配最近一次备份目录，
-            # 再调用本服务的内部接口，写入 backup_files。
+            # 先保持逻辑简单可靠：仅负责真实执行全量备份，后续再在更安全的路径下接入 backup_files 记录。
             script_lines = [
                 "#!/bin/bash",
                 f'echo "$(date +\'%Y-%m-%d %H:%M:%S\') 调度触发备份 job={job_id} plan={plan_id}" >> "{meta_log_path}"',
                 'PATH="/usr/local/bin:/usr/bin:/bin:$PATH"',
-                "",
-                f'BACKUP_ROOT="{backup_root}"',
-                f'DB_NAME="{database}"',
-                "",
                 "/scripts/mysql-backup-schema-data.sh "
                 + f"-H {host} -P {port} -u {user} -p \"{password}\" -d {database} "
                 + (f"--tables '{tables}' " if tables else "")
@@ -345,19 +338,6 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
                 + (f"--clean-days {clean_days} " if clean_days else "")
                 + ("--gzip " if enable_gzip else "")
                 + f'>> "{cron_log_path}" 2>&1',
-                "rc=$?",
-                'if [ "$rc" -eq 0 ]; then',
-                '  latest_dir=$(ls -1dt "${BACKUP_ROOT}/${DB_NAME}"_* 2>/dev/null | head -n 1)',
-                "  if [ -n \"$latest_dir\" ]; then",
-                "    backup_name=$(basename \"$latest_dir\")",
-                "    backup_time=$(date '+%Y-%m-%d %H:%M:%S')",
-                f"    curl -s -X POST 'http://127.0.0.1:8081/internal/jobs/{plan_id}/{job_id}/full-backup' "
-                + r"-H 'Content-Type: application/json' "
-                + r"-d '{\"backup_name\":\"'\"${backup_name}\"'\",\"backup_dir\":\"'\"${latest_dir}\"'\",\"backup_time\":\"'\"${backup_time}\"'\"}' "
-                + f'>> "{meta_log_path}" 2>&1 || true',
-                "  fi",
-                "fi",
-                "exit \"$rc\"",
                 "",
             ]
             try:
