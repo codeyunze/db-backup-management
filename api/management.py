@@ -377,13 +377,13 @@ def internal_run_job(job_id):
                 now_str = _time.strftime("%Y-%m-%d %H:%M:%S", _time.localtime())
                 job["last_run_at"] = now_str
                 _save_backup_plans(plans)
-                _append_job_log(job_id, f"手动执行全量定时任务成功: plan_id={plan.get('id')}, database={database}")
+                _append_job_log(job_id, f"执行全量定时任务成功: plan_id={plan.get('id')}, database={database}")
                 return jsonify({
                     "code": 200,
                     "msg": "全量备份成功",
                     "data": {"stdout": stdout, "stderr": stderr},
                 }), 200
-            _append_job_log(job_id, f"手动执行全量定时任务失败: plan_id={plan.get('id')}, err={(stderr or stdout or '')[:200]!r}")
+            _append_job_log(job_id, f"执行全量定时任务失败: plan_id={plan.get('id')}, err={(stderr or stdout or '')[:200]!r}")
             return jsonify({
                 "code": 500,
                 "msg": "全量备份失败",
@@ -423,9 +423,9 @@ def internal_run_job(job_id):
                 now_str = _time.strftime("%Y-%m-%d %H:%M:%S", _time.localtime())
                 job["last_run_at"] = now_str
                 _save_backup_plans(plans)
-                _append_job_log(job_id, f"手动执行增量定时任务成功: plan_id={plan.get('id')}, database={database}, full_backup_dir={full_dir}")
+                _append_job_log(job_id, f"执行增量定时任务成功: plan_id={plan.get('id')}, database={database}, full_backup_dir={full_dir}")
             else:
-                _append_job_log(job_id, f"手动执行增量定时任务失败: plan_id={plan.get('id')}, database={database}, full_backup_dir={full_dir}")
+                _append_job_log(job_id, f"执行增量定时任务失败: plan_id={plan.get('id')}, database={database}, full_backup_dir={full_dir}")
             return resp, status
 
         else:
@@ -565,10 +565,11 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
 
             if backup_type == "incremental":
                 # 增量任务：由后端统一解析 full_backup_dir 并执行，cron 仅负责触发 HTTP 调用
+                # 为避免在日志中输出包含 Unicode 转义的原始 JSON，仅保留内部 _append_job_log 记录的人类可读信息
                 new_lines.append(f"{CRON_MARK_PREFIX}{job_id} plan={plan_id}")
                 cmd = (
                     f"{schedule} curl -s -X POST 'http://127.0.0.1:8081/internal/jobs/{job_id}/run' "
-                    f">> \"{meta_log_path}\" 2>&1"
+                    f"-o /dev/null 2>> \"{meta_log_path}\""
                 )
                 new_lines.append(cmd)
             else:
@@ -617,7 +618,7 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
                     f'-d "backup_name=${{backup_name}}" '
                     f'-d "backup_dir=${{latest_dir}}" '
                     f'-d "backup_time=${{backup_time}}" '
-                    f'>> "{meta_log_path}" 2>&1 || true',
+                    f'-o /dev/null 2>> "{meta_log_path}" || true',
                     "  fi",
                     "fi",
                     'exit \"$rc\"',

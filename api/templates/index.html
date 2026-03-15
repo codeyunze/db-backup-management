@@ -922,10 +922,36 @@
                 if (selBase) {
                     selBase.innerHTML = '<option value="">-- 请选择全量备份目录 --</option>';
                 }
-                items.forEach(it => {
+                const hasIncrementalCache = {};
+                async function hasIncremental(fullDir, dbName) {
+                    const key = fullDir + '|' + (dbName || '');
+                    if (key in hasIncrementalCache) return hasIncrementalCache[key];
+                    try {
+                        const params = new URLSearchParams();
+                        params.set('full_backup_dir', fullDir);
+                        if (dbName) params.set('database', dbName);
+                        const resp = await fetch('/db/incrementals?' + params.toString());
+                        const json = await resp.json().catch(() => ({}));
+                        const list = (json.data && (json.data.items || json.data.list || [])) || [];
+                        hasIncrementalCache[key] = list.length > 0;
+                        return hasIncrementalCache[key];
+                    } catch (e) {
+                        hasIncrementalCache[key] = false;
+                        return false;
+                    }
+                }
+
+                for (const it of items) {
                     const tr = document.createElement('tr');
                     const esc = s => ('' + s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-                    const ops = '<td class="actions col-actions"><button class="btn btn-secondary btn-sm btn-log" data-dir="' + esc(it.dirName) + '" data-type="backup">备份日志</button><button class="btn btn-secondary btn-sm btn-log" data-dir="' + esc(it.dirName) + '" data-type="restore">还原日志</button><button class="btn btn-secondary btn-sm btn-tables" data-dir="' + esc(it.dirName) + '">查看表</button><button class="btn btn-secondary btn-sm btn-incr-list" data-backup-dir="' + esc(it.backupDir) + '" data-database="' + esc(it.database) + '">查看增量</button><button class="btn btn-danger btn-sm btn-del" data-dir="' + esc(it.dirName) + '">删除</button></td>';
+                    let ops = '<td class="actions col-actions">' +
+                        '<button class="btn btn-secondary btn-sm btn-log" data-dir="' + esc(it.dirName) + '" data-type="backup">备份日志</button>' +
+                        '<button class="btn btn-secondary btn-sm btn-log" data-dir="' + esc(it.dirName) + '" data-type="restore">还原日志</button>' +
+                        '<button class="btn btn-secondary btn-sm btn-tables" data-dir="' + esc(it.dirName) + '">查看表</button>';
+                    if (await hasIncremental(it.backupDir, it.database)) {
+                        ops += '<button class="btn btn-secondary btn-sm btn-incr-list" data-backup-dir="' + esc(it.backupDir) + '" data-database="' + esc(it.database) + '">查看增量</button>';
+                    }
+                    ops += '<button class="btn btn-danger btn-sm btn-del" data-dir="' + esc(it.dirName) + '">删除</button></td>';
                     tr.innerHTML = '<td class="col-db" title="' + esc(it.database) + '">' + esc(it.database) + '</td><td class="size dir-name" title="' + esc(it.dirName) + '">' + esc(it.dirName) + '</td><td class="col-time">' + esc(it.backupTime) + '</td><td class="col-size">' + fmtSize(it.size) + '</td>' + ops;
                     tbody.appendChild(tr);
                     const opt = document.createElement('option');
@@ -938,7 +964,7 @@
                         opt2.textContent = it.dirName + ' (' + it.backupTime + ')';
                         selBase.appendChild(opt2);
                     }
-                });
+                }
                 empty.style.display = items.length ? 'none' : 'block';
                 tbody.querySelectorAll('.btn-log').forEach(btn => {
                     btn.onclick = () => showLog(btn.dataset.dir, btn.dataset.type);
