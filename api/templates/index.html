@@ -748,7 +748,7 @@
                             <input type="text" id="job-ignore" placeholder="如 order_log 多个表用逗号分隔，留空=无">
                         </div>
                     </div>
-                    <div class="form-row">
+                    <div class="form-row" id="job-clean-row">
                         <div class="form-group" style="min-width: 80px; max-width: 180px;">
                             <label>清理旧备份（天）（0=不清理）</label>
                             <input type="number" id="job-clean" value="0" min="0" placeholder="0=不清理">
@@ -1524,6 +1524,7 @@
             const tablesEl = document.getElementById('job-tables');
             const ignoreEl = document.getElementById('job-ignore');
             const cleanEl = document.getElementById('job-clean');
+            const cleanRow = document.getElementById('job-clean-row');
 
             // 重建实例下拉
             planSel.innerHTML = '<option value="">-- 请选择数据库实例 --</option>';
@@ -1570,15 +1571,22 @@
                 tablesEl.value = job.tables || '';
                 ignoreEl.value = job.ignore_tables || '';
                 cleanEl.value = job.clean_days != null ? job.clean_days : 0;
-                // 列表接口未返回 tables/ignore_tables，从该实例下获取完整 job 回填
+                // 若为增量任务，则显示其关联的全量任务的表过滤条件（只读展示）
                 try {
                     const r = await fetch('/backup-plans/' + encodeURIComponent(job.plan_id));
-                    const j = await r.json().catch(() => ({}));
-                    if (r.ok && j.code === 200 && j.data && Array.isArray(j.data.jobs)) {
-                        const fullJob = j.data.jobs.find(ji => (ji.id || '') === (job.id || ''));
-                        if (fullJob) {
-                            tablesEl.value = fullJob.tables || '';
-                            ignoreEl.value = fullJob.ignore_tables || '';
+                    const pj = await r.json().catch(() => ({}));
+                    if (r.ok && pj.code === 200 && pj.data && Array.isArray(pj.data.jobs)) {
+                        let sourceJob = null;
+                        if (job.backup_type === 'incremental' && job.linked_full_backup_job_id) {
+                            sourceJob = pj.data.jobs.find(
+                                ji => (ji.id || '') === (job.linked_full_backup_job_id || '')
+                            );
+                        } else {
+                            sourceJob = pj.data.jobs.find(ji => (ji.id || '') === (job.id || ''));
+                        }
+                        if (sourceJob) {
+                            tablesEl.value = sourceJob.tables || '';
+                            ignoreEl.value = sourceJob.ignore_tables || '';
                         }
                     }
                 } catch (e) { /* 保留已填写的空值 */ }
@@ -1598,21 +1606,15 @@
                 ignoreEl.value = '';
                 cleanEl.value = 0;
             }
-            // 根据备份类型显示/隐藏「关联全量任务」行
-            if (linkedRow) {
-                if (typeEl.value === 'incremental') {
-                    linkedRow.style.display = 'flex';
-                } else {
-                    linkedRow.style.display = 'none';
-                }
-            }
+            // 根据备份类型显示/隐藏「关联全量任务」行和「清理旧备份」行
+            const applyTypeVisibility = () => {
+                const isInc = typeEl.value === 'incremental';
+                if (linkedRow) linkedRow.style.display = isInc ? 'flex' : 'none';
+                if (cleanRow) cleanRow.style.display = isInc ? 'none' : 'flex';
+            };
+            applyTypeVisibility();
             typeEl.onchange = () => {
-                if (!linkedRow) return;
-                if (typeEl.value === 'incremental') {
-                    linkedRow.style.display = 'flex';
-                } else {
-                    linkedRow.style.display = 'none';
-                }
+                applyTypeVisibility();
             };
 
             refreshJobPlanInfo(planSel.value || null);

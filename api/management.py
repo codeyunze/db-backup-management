@@ -900,8 +900,37 @@ def create_backup_job(plan_id):
                     job["backup_files"] = []
                 elif backup_type == "incremental":
                     linked_full_id = (data.get("linked_full_backup_job_id") or "").strip()
-                    if linked_full_id:
-                        job["linked_full_backup_job_id"] = linked_full_id
+                    if not linked_full_id:
+                        return (
+                            jsonify(
+                                {
+                                    "code": 400,
+                                    "msg": "增量任务必须指定 linked_full_backup_job_id",
+                                    "data": None,
+                                }
+                            ),
+                            400,
+                        )
+                    # 限制：同一个全量任务下只能有一个增量任务
+                    for pp in plans:
+                        jj_list = pp.get("jobs") or []
+                        if not isinstance(jj_list, list):
+                            continue
+                        for jj in jj_list:
+                            if (jj.get("backup_type") or "full") == "incremental" and (
+                                jj.get("linked_full_backup_job_id") or ""
+                            ) == linked_full_id:
+                                return (
+                                    jsonify(
+                                        {
+                                            "code": 400,
+                                            "msg": "同一个全量备份任务下只允许存在一个增量备份定时任务。",
+                                            "data": None,
+                                        }
+                                    ),
+                                    400,
+                                )
+                    job["linked_full_backup_job_id"] = linked_full_id
                 jobs.append(job)
                 p["jobs"] = jobs
                 _append_job_log(
@@ -1105,7 +1134,6 @@ def update_backup_job(plan_id, job_id):
                 old_enabled = bool(j.get("enabled", True))
                 old_schedule = j.get("schedule") or ""
                 old_name = j.get("name") or ""
-                old_backup_type = (j.get("backup_type") or "full").strip() or "full"
                 for key in [
                     "name",
                     "schedule",
@@ -1130,21 +1158,25 @@ def update_backup_job(plan_id, job_id):
                 new_enabled = bool(j.get("enabled", True))
                 new_schedule = j.get("schedule") or ""
                 new_name = j.get("name") or ""
+                # 如为增量任务，检查“同一全量任务仅允许一个增量任务”的约束
                 new_backup_type = (j.get("backup_type") or "full").strip() or "full"
-
-                # 如果是全量任务且尝试禁用，检查是否有增量任务依赖
-                if old_backup_type == "full" and not new_enabled and old_enabled:
+                new_linked_full_id = (j.get("linked_full_backup_job_id") or "").strip()
+                if new_backup_type == "incremental" and new_linked_full_id:
                     for pp in plans:
                         jobs_all = pp.get("jobs") or []
                         if not isinstance(jobs_all, list):
                             continue
                         for jj in jobs_all:
-                            if (jj.get("backup_type") or "full") == "incremental" and (jj.get("linked_full_backup_job_id") or "") == job_id:
+                            if jj.get("id") == job_id:
+                                continue
+                            if (jj.get("backup_type") or "full") == "incremental" and (
+                                jj.get("linked_full_backup_job_id") or ""
+                            ) == new_linked_full_id:
                                 return (
                                     jsonify(
                                         {
                                             "code": 400,
-                                            "msg": "存在增量定时任务依赖该全量任务，请先调整或删除对应的增量任务。",
+                                            "msg": "同一个全量备份任务下只允许存在一个增量备份定时任务。",
                                             "data": None,
                                         }
                                     ),
