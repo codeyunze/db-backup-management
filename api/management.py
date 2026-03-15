@@ -130,6 +130,54 @@ def _append_full_backup_file_record(plans, plan_id: str, job_id: str, backup_nam
         return
 
 
+def _resolve_full_backup_dir_for_incremental(plans, linked_full_backup_job_id: str):
+    """
+    根据增量任务记录的 linked_full_backup_job_id，在内存中的 plans 结构中解析本次应使用的 full_backup_dir。
+
+    规则：
+    - 在所有 plan 的 jobs 中查找 id == linked_full_backup_job_id 的 job；
+    - 仅当该 job 的 backup_type == "full" 时才有效；
+    - 从该 job 的 backup_files（若存在）中，按 backup_time 倒序取第一条的 backup_dir 作为 full_backup_dir；
+    - 若不存在或无有效 backup_files，则返回 None。
+    """
+    if not linked_full_backup_job_id:
+        return None
+    try:
+        best_dir = None
+        best_time = None
+        for p in plans:
+            jobs = p.get("jobs") or []
+            if not isinstance(jobs, list):
+                continue
+            for j in jobs:
+                if j.get("id") != linked_full_backup_job_id:
+                    continue
+                if (j.get("backup_type") or "full") != "full":
+                    return None
+                bf_list = j.get("backup_files") or []
+                if not isinstance(bf_list, list) or not bf_list:
+                    return None
+                for entry in bf_list:
+                    if not isinstance(entry, dict):
+                        continue
+                    bdir = (entry.get("backup_dir") or "").strip()
+                    btime = (entry.get("backup_time") or "").strip()
+                    if not bdir:
+                        continue
+                    # backup_files 由最近到最早维护，这里简单取第一条即可；为健壮性仍比较 backup_time
+                    if best_dir is None:
+                        best_dir = bdir
+                        best_time = btime
+                    else:
+                        if btime and (not best_time or btime > best_time):
+                            best_dir = bdir
+                            best_time = btime
+                return best_dir
+        return best_dir
+    except Exception:
+        return None
+
+
 def _notify_full_backup_completed(plan_id: str, job_id: str, backup_name: str, backup_dir: str, backup_time: str) -> None:
     """
     供内部调用：在备份脚本或 API 得知全量备份成功后，更新 backup-plans.json 中对应 job 的 backup_files。
@@ -335,7 +383,7 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
                 + f"-H {host} -P {port} -u {user} -p \"{password}\" -d {database} "
                 + (f"--tables '{tables}' " if tables else "")
                 + (f"--ignore-tables '{ignore_tables}' " if ignore_tables else "")
-                + (f"--clean-days {clean_days} " if clean_days else "")
+                + (f"-c {clean_days} " if clean_days else "")
                 + ("--gzip " if enable_gzip else "")
                 + f'>> "{cron_log_path}" 2>&1',
                 "",
