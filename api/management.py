@@ -266,7 +266,13 @@ def internal_full_backup_callback(job_id, plan_id):
     - backup_time: 备份完成时间字符串（可选，缺省为当前时间）
     """
     try:
-        data = request.get_json() or {}
+        # 兼容多种提交方式：JSON / 表单 / 查询参数
+        data = request.get_json(silent=True) or {}
+        if not data and request.form:
+            data = request.form.to_dict()  # curl -d k=v
+        if not data and request.args:
+            data = request.args.to_dict()
+
         backup_dir = (data.get("backup_dir") or "").strip()
         if not backup_dir:
             return jsonify({"code": 400, "msg": "缺少 backup_dir", "data": None}), 400
@@ -607,9 +613,11 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
                     '  if [ -n "$latest_dir" ]; then',
                     '    backup_name=$(basename "$latest_dir")',
                     "    backup_time=$(date '+%Y-%m-%d %H:%M:%S')",
-                    f"    curl -s -X POST 'http://127.0.0.1:8081/internal/jobs/{job_id}/{plan_id}/full-backup' "
-                    + r"-H 'Content-Type: application/json' "
-                    + r"-d '{\"backup_name\":\"'\"${backup_name}\"'\",\"backup_dir\":\"'\"${latest_dir}\"'\",\"backup_time\":\"'\"${backup_time}\"'\"}' "
+                    "    curl -s -X POST "
+                    f"\"http://127.0.0.1:8081/internal/jobs/{job_id}/{plan_id}/full-backup\" "
+                    + r"-d \"backup_name=${backup_name}\" "
+                    + r"-d \"backup_dir=${latest_dir}\" "
+                    + r"-d \"backup_time=${backup_time}\" "
                     + f'>> "{meta_log_path}" 2>&1 || true',
                     "  fi",
                     "fi",
