@@ -233,6 +233,137 @@ def internal_full_backup_callback(plan_id, job_id):
         return jsonify({"code": 500, "msg": str(e), "data": None}), 500
 
 
+@app.route("/internal/jobs/<job_id>/run", methods=["POST"])
+def internal_run_job(job_id):
+    """
+    内部执行入口：根据 job_id 立即执行一次全量或增量任务。
+
+    - 对 full 任务：组装参数调用 mysql-backup-schema-data.sh。
+    - 对 incremental 任务：通过 linked_full_backup_job_id 解析基线 full_backup_dir，
+      然后复用 _handle_backup_incremental_core 逻辑调用 mysql-backup-incremental.sh。
+
+    注意：当前实现不会被 crontab 自动调用，主要用于手动调试与后续扩展。
+    """
+    try:
+        plans = _load_backup_plans()
+        target_plan = None
+        target_job = None
+        for p in plans:
+            jobs = p.get("jobs") or []
+            if not isinstance(jobs, list):
+                continue
+            for j in jobs:
+                if j.get("id") == job_id:
+                    target_plan = p
+                    target_job = j
+                    break
+            if target_job:
+                break
+        if not target_plan or not target_job:
+            return jsonify({"code": 404, "msg": "未找到指定定时任务", "data": None}), 404
+
+        plan = target_plan
+        job = target_job
+        backup_type = (job.get("backup_type") or "full").strip() or "full"
+
+        host = (plan.get("host") or "").strip()
+        user = (plan.get("user") or "").strip()
+        password = plan.get("password") or ""
+        port = int(plan.get("port") or 3306)
+        database = (plan.get("database") or "").strip()
+        backup_dir_root = (plan.get("backup_dir") or BACKUP_ROOT).strip() or BACKUP_ROOT
+
+        if not (host and user and database):
+            return jsonify({"code": 400, "msg": "plan 配置不完整: host/user/database 不能为空", "data": None}), 400
+
+        if backup_type == "full":
+            # 以 job 配置为主，缺省回退到 plan
+            tables = (job.get("tables") or plan.get("tables") or "").strip()
+            ignore_tables = (job.get("ignore_tables") or plan.get("ignore_tables") or "").strip()
+            clean_days = int(job.get("clean_days") if job.get("clean_days") is not None else plan.get("clean_days") or 0)
+            enable_gzip = bool(
+                job.get("enable_gzip")
+                if job.get("enable_gzip") is not None
+                else plan.get("enable_gzip") or False
+            )
+
+            args = [
+                "-H", str(host),
+                "-P", str(port),
+                "-u", str(user),
+                "-p", str(password),
+                "-d", str(database),
+                "-b", backup_dir_root,
+            ]
+            if tables:
+                args.extend(["-t", tables])
+            if ignore_tables:
+                args.extend(["-i", ignore_tables])
+            if clean_days > 0:
+                args.extend(["-c", str(clean_days)])
+            if enable_gzip:
+                args.append("--gzip")
+
+            success, stdout, stderr, returncode = _run_script("mysql-backup-schema-data.sh", args)
+
+            if success:
+                _append_job_log(job_id, f"手动执行全量定时任务成功: plan_id={plan.get('id')}, database={database}")
+                return jsonify({
+                    "code": 200,
+                    "msg": "全量备份成功",
+                    "data": {"stdout": stdout, "stderr": stderr},
+                }), 200
+            _append_job_log(job_id, f"手动执行全量定时任务失败: plan_id={plan.get('id')}, err={(stderr or stdout or '')[:200]!r}")
+            return jsonify({
+                "code": 500,
+                "msg": "全量备份失败",
+                "data": {"stdout": stdout, "stderr": stderr, "returncode": returncode},
+            }), 500
+
+        elif backup_type == "incremental":
+            linked_id = (job.get("linked_full_backup_job_id") or "").strip()
+            if not linked_id:
+                return jsonify({
+                    "code": 400,
+                    "msg": "增量任务缺少 linked_full_backup_job_id，请先在前端关联一个全量任务",
+                    "data": None,
+                }), 400
+
+            full_dir = _resolve_full_backup_dir_for_incremental(plans, linked_id)
+            if not full_dir:
+                return jsonify({
+                    "code": 400,
+                    "msg": "未找到可用的基线全量备份，请先执行一次所关联的全量任务",
+                    "data": None,
+                }), 400
+
+            data = {
+                "host": host,
+                "port": port,
+                "user": user,
+                "password": password,
+                "database": database,
+                "full_backup_dir": full_dir,
+            }
+            resp, status = _handle_backup_incremental_core(data)
+            # _handle_backup_incremental_core 返回的是 (Response,status_code)
+            if status == 200:
+                _append_job_log(job_id, f"手动执行增量定时任务成功: plan_id={plan.get('id')}, database={database}, full_backup_dir={full_dir}")
+            else:
+                _append_job_log(job_id, f"手动执行增量定时任务失败: plan_id={plan.get('id')}, database={database}, full_backup_dir={full_dir}")
+            return resp, status
+
+        else:
+            return jsonify({
+                "code": 400,
+                "msg": f"不支持的备份类型: {backup_type}",
+                "data": None,
+            }), 400
+
+    except Exception as e:
+        return jsonify({"code": 500, "msg": str(e), "data": None}), 500
+
+
 def _generate_plan_id():
     """
     简单生成一个字符串 ID（避免额外依赖 uuid 库）。
@@ -372,13 +503,16 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
                 if job.get("enable_gzip") is not None
                 else plan.get("enable_gzip") or False
             )
+            backup_root = (plan.get("backup_dir") or BACKUP_ROOT).strip() or BACKUP_ROOT
 
             # 生成单独的 job 执行脚本 jobs/job_<id>.sh
-            # 先保持逻辑简单可靠：仅负责真实执行全量备份，后续再在更安全的路径下接入 backup_files 记录。
+            # 在备份成功后，通过内部接口记录 backup_files（失败不会影响备份本身）。
             script_lines = [
                 "#!/bin/bash",
                 f'echo "$(date +\'%Y-%m-%d %H:%M:%S\') 调度触发备份 job={job_id} plan={plan_id}" >> "{meta_log_path}"',
                 'PATH="/usr/local/bin:/usr/bin:/bin:$PATH"',
+                f'BACKUP_ROOT="{backup_root}"',
+                f'DB_NAME="{database}"',
                 "/scripts/mysql-backup-schema-data.sh "
                 + f"-H {host} -P {port} -u {user} -p \"{password}\" -d {database} "
                 + (f"--tables '{tables}' " if tables else "")
@@ -386,6 +520,19 @@ def _sync_job_crontab(plan_id: str, job: dict, remove_only: bool = False) -> Non
                 + (f"-c {clean_days} " if clean_days else "")
                 + ("--gzip " if enable_gzip else "")
                 + f'>> "{cron_log_path}" 2>&1',
+                "rc=$?",
+                'if [ "$rc" -eq 0 ]; then',
+                '  latest_dir=$(ls -1dt "${BACKUP_ROOT}/${DB_NAME}"_* 2>/dev/null | head -n 1)',
+                '  if [ -n "$latest_dir" ]; then',
+                '    backup_name=$(basename "$latest_dir")',
+                "    backup_time=$(date '+%Y-%m-%d %H:%M:%S')",
+                f"    curl -s -X POST 'http://127.0.0.1:8081/internal/jobs/{plan_id}/{job_id}/full-backup' "
+                + r"-H 'Content-Type: application/json' "
+                + r"-d '{\"backup_name\":\"'\"${backup_name}\"'\",\"backup_dir\":\"'\"${latest_dir}\"'\",\"backup_time\":\"'\"${backup_time}\"'\"}' "
+                + f'>> "{meta_log_path}" 2>&1 || true',
+                "  fi",
+                "fi",
+                'exit "$rc"',
                 "",
             ]
             try:
@@ -1334,80 +1481,86 @@ def _get_last_incremental_end_position(full_backup_dir, database=None):
     return candidates[-1][1], candidates[-1][2]
 
 
-@app.route("/db/backup-incremental", methods=["POST"])
-def backup_incremental():
+def _handle_backup_incremental_core(data: dict):
     """
-    基于已有的全量备份目录执行一次 binlog 增量备份。
+    公共核心逻辑：基于已有的全量备份目录执行一次 binlog 增量备份。
 
-    请求体 JSON：
+    data 字段：
     - host, port, user, password, database: 连接与库名（必填）
     - full_backup_dir: 所属全量备份目录的绝对路径（必填）
     - start_file / start_pos: 可选；不传时：若该全量下已有增量则从「最后一个增量」的 meta/binlog_to.json 取结束位点，否则从全量 meta/tables-binlog.json 读取
     - stop_datetime: binlog 截止时间（可选）
     """
-    try:
-        data = request.get_json() or {}
-        host = data.get("host")
-        user = data.get("user")
-        password = data.get("password")
-        database = data.get("database")
-        full_backup_dir = data.get("full_backup_dir")
-        start_file = data.get("start_file")
-        start_pos = data.get("start_pos")
+    host = data.get("host")
+    user = data.get("user")
+    password = data.get("password")
+    database = data.get("database")
+    full_backup_dir = data.get("full_backup_dir")
+    start_file = data.get("start_file")
+    start_pos = data.get("start_pos")
 
-        if not all([host, user, password, database, full_backup_dir]):
+    if not all([host, user, password, database, full_backup_dir]):
+        return jsonify({
+            "code": 400,
+            "msg": "缺少必要参数: host, user, password, database, full_backup_dir",
+            "data": None,
+        }), 400
+
+    if not start_file or start_pos is None:
+        # 若该全量下已有增量，则从「最后一个增量」的结束位点开始；否则从全量 meta 的 tables-binlog 开始
+        start_file, start_pos = _get_last_incremental_end_position(
+            full_backup_dir, data.get("database")
+        )
+        if not start_file or start_pos is None:
+            start_file, start_pos = _get_binlog_start_from_full_backup(full_backup_dir)
+        if not start_file or start_pos is None:
             return jsonify({
                 "code": 400,
-                "msg": "缺少必要参数: host, user, password, database, full_backup_dir",
+                "msg": "未找到起始位点：请确认全量备份目录下存在 meta/tables-binlog.json 且内容有效，或手动传入 start_file、start_pos",
                 "data": None,
             }), 400
 
-        if not start_file or start_pos is None:
-            # 若该全量下已有增量，则从「最后一个增量」的结束位点开始；否则从全量 meta 的 tables-binlog 开始
-            start_file, start_pos = _get_last_incremental_end_position(
-                full_backup_dir, data.get("database")
-            )
-            if not start_file or start_pos is None:
-                start_file, start_pos = _get_binlog_start_from_full_backup(full_backup_dir)
-            if not start_file or start_pos is None:
-                return jsonify({
-                    "code": 400,
-                    "msg": "未找到起始位点：请确认全量备份目录下存在 meta/tables-binlog.json 且内容有效，或手动传入 start_file、start_pos",
-                    "data": None,
-                }), 400
+    start_pos_int = int(start_pos)
 
-        start_pos_int = int(start_pos)
+    args = [
+        "-H", str(host),
+        "-P", str(data.get("port", "3306")),
+        "-u", str(user),
+        "-p", str(password),
+        "-d", str(database),
+        "-b", BACKUP_ROOT,
+        "-F", str(full_backup_dir),
+        "--start-file", str(start_file),
+        "--start-pos", str(start_pos_int),
+    ]
 
-        args = [
-            "-H", str(host),
-            "-P", str(data.get("port", "3306")),
-            "-u", str(user),
-            "-p", str(password),
-            "-d", str(database),
-            "-b", BACKUP_ROOT,
-            "-F", str(full_backup_dir),
-            "--start-file", str(start_file),
-            "--start-pos", str(start_pos_int),
-        ]
+    stop_dt = data.get("stop_datetime")
+    if stop_dt:
+        args.extend(["--stop-datetime", str(stop_dt)])
 
-        stop_dt = data.get("stop_datetime")
-        if stop_dt:
-            args.extend(["--stop-datetime", str(stop_dt)])
+    success, stdout, stderr, returncode = _run_script("mysql-backup-incremental.sh", args)
 
-        success, stdout, stderr, returncode = _run_script("mysql-backup-incremental.sh", args)
-
-        if success:
-            return jsonify({
-                "code": 200,
-                "msg": "增量备份成功",
-                "data": {"stdout": stdout, "stderr": stderr},
-            })
+    if success:
         return jsonify({
-            "code": 500,
-            "msg": "增量备份失败",
-            "data": {"stdout": stdout, "stderr": stderr, "returncode": returncode},
-        }), 500
+            "code": 200,
+            "msg": "增量备份成功",
+            "data": {"stdout": stdout, "stderr": stderr},
+        }), 200
+    return jsonify({
+        "code": 500,
+        "msg": "增量备份失败",
+        "data": {"stdout": stdout, "stderr": stderr, "returncode": returncode},
+    }), 500
 
+
+@app.route("/db/backup-incremental", methods=["POST"])
+def backup_incremental():
+    """
+    HTTP 接口：基于已有的全量备份目录执行一次 binlog 增量备份。
+    """
+    try:
+        data = request.get_json() or {}
+        return _handle_backup_incremental_core(data)
     except Exception as e:
         return jsonify({
             "code": 500,

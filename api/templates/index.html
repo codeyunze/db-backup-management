@@ -705,6 +705,7 @@
                             <label>备份类型 *</label>
                             <select id="job-backup-type">
                                 <option value="full">全量备份</option>
+                                <option value="incremental">增量备份</option>
                             </select>
                         </div>
                     </div>
@@ -718,6 +719,14 @@
                         <div class="form-group" style="flex:2;">
                             <label>调度任务名称 *</label>
                             <input type="text" id="job-name" placeholder="例如 每天凌晨 1 点全量备份 mall">
+                        </div>
+                    </div>
+                    <div class="form-row" id="job-linked-full-row" style="display:none;">
+                        <div class="form-group" style="flex:2;">
+                            <label>关联的全量定时任务（仅增量任务需要） *</label>
+                            <select id="job-linked-full">
+                                <option value="">-- 请选择对应的全量定时任务 --</option>
+                            </select>
                         </div>
                     </div>
                     <div class="form-row">
@@ -1509,6 +1518,8 @@
             const nameEl = document.getElementById('job-name');
             const cronEl = document.getElementById('job-cron');
             const typeEl = document.getElementById('job-backup-type');
+            const linkedFullEl = document.getElementById('job-linked-full');
+            const linkedRow = document.getElementById('job-linked-full-row');
             const gzipEl = document.getElementById('job-gzip');
             const tablesEl = document.getElementById('job-tables');
             const ignoreEl = document.getElementById('job-ignore');
@@ -1523,6 +1534,27 @@
                 planSel.appendChild(opt);
             });
 
+            // 准备「关联的全量定时任务」下拉（跨实例）
+            if (linkedFullEl) {
+                linkedFullEl.innerHTML = '<option value=\"\">-- 请选择对应的全量定时任务 --</option>';
+                try {
+                    const r = await fetch('/scheduled-tasks');
+                    const j = await r.json().catch(() => ({}));
+                    const items = (r.ok && j.code === 200 && j.data && (j.data.items || [])) || [];
+                    items
+                        .filter(x => (x.backup_type || 'full') === 'full')
+                        .forEach(x => {
+                            const opt = document.createElement('option');
+                            opt.value = x.id || '';
+                            const label = (x.name || '') + (x.plan_name ? ' [' + x.plan_name + ']' : '');
+                            opt.textContent = label || (x.id || '');
+                            linkedFullEl.appendChild(opt);
+                        });
+                } catch (e) {
+                    // 忽略加载失败，用户仍可稍后重新打开
+                }
+            }
+
             if (job && job.plan_id && job.id) {
                 _editingJobPlanId = job.plan_id;
                 _editingJobId = job.id;
@@ -1531,6 +1563,9 @@
                 nameEl.value = job.name || '';
                 cronEl.value = job.cron_expr || job.schedule || '';
                 typeEl.value = job.backup_type || 'full';
+                if (linkedFullEl) {
+                    linkedFullEl.value = job.linked_full_backup_job_id || '';
+                }
                 gzipEl.checked = !!job.enable_gzip;
                 tablesEl.value = job.tables || '';
                 ignoreEl.value = job.ignore_tables || '';
@@ -1555,11 +1590,31 @@
                 nameEl.value = '';
                 cronEl.value = '';
                 typeEl.value = 'full';
+                if (linkedFullEl) {
+                    linkedFullEl.value = '';
+                }
                 gzipEl.checked = true;
                 tablesEl.value = '';
                 ignoreEl.value = '';
                 cleanEl.value = 0;
             }
+            // 根据备份类型显示/隐藏「关联全量任务」行
+            if (linkedRow) {
+                if (typeEl.value === 'incremental') {
+                    linkedRow.style.display = 'flex';
+                } else {
+                    linkedRow.style.display = 'none';
+                }
+            }
+            typeEl.onchange = () => {
+                if (!linkedRow) return;
+                if (typeEl.value === 'incremental') {
+                    linkedRow.style.display = 'flex';
+                } else {
+                    linkedRow.style.display = 'none';
+                }
+            };
+
             refreshJobPlanInfo(planSel.value || null);
             modal.style.display = 'flex';
         }
@@ -1621,6 +1676,7 @@
             const tablesEl = document.getElementById('job-tables');
             const ignoreEl = document.getElementById('job-ignore');
             const cleanEl = document.getElementById('job-clean');
+            const linkedFullEl = document.getElementById('job-linked-full');
 
             const planId = planSel.value.trim();
             const name = nameEl.value.trim();
@@ -1630,9 +1686,15 @@
             const ignore = ignoreEl.value.trim();
             const cleanDays = parseInt(cleanEl.value, 10) || 0;
             const enableGzip = !!gzipEl.checked;
+            const linkedFullId = linkedFullEl ? (linkedFullEl.value || '').trim() : '';
 
             if (!planId || !name || !schedule) {
                 toast('请完整选择数据库实例并填写调度任务名称和调度策略', 'error');
+                return;
+            }
+
+            if (backupType === 'incremental' && !linkedFullId) {
+                toast('增量定时任务必须关联一个全量定时任务', 'error');
                 return;
             }
 
@@ -1668,6 +1730,10 @@
                 clean_days: cleanDays,
                 enable_gzip: enableGzip
             };
+
+            if (backupType === 'incremental') {
+                body.linked_full_backup_job_id = linkedFullId;
+            }
 
             // 新增的调度任务默认状态为“停止”；编辑时若切换到其他实例，新任务也设为停止
             if (!_editingJobId || planId !== _editingJobPlanId) {
