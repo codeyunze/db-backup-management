@@ -1993,10 +1993,19 @@ def get_backup_tables(dir_name):
 
     tables = []
     views = []
+    seen = set()
     for fn in sorted(os.listdir(schema_dir)):
-        if fn.startswith(".") or not fn.endswith(".sql"):
+        if fn.startswith("."):
             continue
-        name = fn[:-4]
+        if fn.endswith(".sql.gz"):
+            name = fn[:-7]
+        elif fn.endswith(".sql"):
+            name = fn[:-4]
+        else:
+            continue
+        if not name or name in seen:
+            continue
+        seen.add(name)
         if name in views_set:
             views.append(name)
         else:
