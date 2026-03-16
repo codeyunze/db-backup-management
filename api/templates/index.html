@@ -1298,8 +1298,9 @@
                     const delBtn = !enabled ? '<button class="btn btn-danger btn-sm btn-job-del" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">删除</button>' : '';
                     const editBtn = !enabled ? '<button class="btn btn-secondary btn-sm btn-job-edit" data-plan-id="' + esc(it.plan_id || '') + '" data-job-id="' + esc(it.id || '') + '">编辑</button> ' : '';
                     const logBtn = '<button class="btn btn-secondary btn-sm btn-job-log" data-job-id="' + esc(it.id || '') + '">日志</button> ';
+                    const fullName = it.name || '';
                     tr.innerHTML =
-                        '<td class="col-name">' + esc(it.name || '') + '</td>' +
+                        '<td class="col-name" title="' + esc(fullName) + '">' + esc(fullName) + '</td>' +
                         '<td class="col-plan-name">' + esc(it.plan_name || '') + '</td>' +
                         '<td class="col-type">' + (it.backup_type === 'incremental' ? '增量' : '全量') + '</td>' +
                         '<td class="col-cron">' + esc(it.cron_expr || it.schedule || '') + '</td>' +
