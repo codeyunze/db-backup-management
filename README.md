@@ -1,8 +1,19 @@
 # 数据库备份管理
 
-包含 MySQL 备份/还原脚本的 Docker 镜像，内置 mysql、mysqldump、Python3，提供 HTTP API 接口。
+包含 MySQL 备份/还原脚本的 Docker 镜像，底层由 mydumper提供备份、myloader提供还原、Vben Admin前端框架、Python3提供 HTTP API 接口。
 
-![image-20260314162628225](docs/images/image-20260314162628225.png)
+![image-20260329111833454](docs/images/image-20260329111833454.png)
+
+![image-20260329113433319](docs/images/image-20260329113433319.png)
+
+![image-20260329111930275](docs/images/image-20260329111930275.png)
+
+![image-20260329112722769](docs/images/image-20260329112722769.png)
+
+![image-20260329112918939](docs/images/image-20260329112918939.png)
+
+![image-20260329113153633](docs/images/image-20260329113153633.png)
+
 
 
 ## 运行服务
@@ -22,40 +33,45 @@ docker pull registry.cn-guangzhou.aliyuncs.com/devyunze/db-backup-management:lat
 运行容器示例（任选其一镜像地址）：
 
 ```bash
-docker run -d -p 8081:8081 \
-  -v /宿主机/备份目录:/data/backup/mysql \
+docker run -d -p 5555:5555 \
+  -v "/宿主机/备份目录/backup_data:/app/backup_data" \
   --name db-backup \
   codeyunze/db-backup-management:latest
 ```
 
-启动后，访问 `http://localhost:8081/` 即可使用 Web 可视化管理界面。
+启动后，访问 `http://localhost:5555/` 即可使用 Web 可视化管理界面。
+
+默认账号：admin
+
+默认密码：123456
+
+也可自行注册其他账号
 
 
 ### Web 管理界面
 
-访问 `http://localhost:8081/` 可使用可视化界面：
+访问 `http://localhost:5555/` 可使用可视化界面：
 
 - **数据备份**  
   - 支持 **全量备份** 与 **增量备份** 两种模式  
-    - 全量备份：对单个数据库按表进行一次完整备份  
-    - 增量备份：基于某次全量备份，按 binlog 位点生成从“上一次备份结束”到“当前”的变更 SQL，形成连续的增量链  
-  - 支持按表白名单 / 黑名单过滤、自动清理 N 天前旧备份、可选 gzip 压缩（支持边备份边压缩，直接生成 `.sql.gz`）
-- **备份列表**：查看已有全量备份，支持按数据库名筛选，并可查看其后续增量备份列表
+    - **全量备份**：使用 **mydumper** 对单个库按表导出（默认 `*.sql.zst` 等），会话目录落在持久化卷 `backup_data/data/` 下  
+    - **增量备份**：基于某次全量备份目录为基线，按 binlog 位点生成从「上一次备份结束」到「当前」的变更 SQL，形成连续增量链  
+  - 支持按表白名单 / 黑名单过滤、自动清理 N 天前旧备份（`clean_days`）
+- **备份列表**：查看已有全量备份，支持按关键字筛选，并可展开查看该全量下的增量备份列表与日志
 - **数据还原**：  
-  - 仅选全量目录：执行全量还原  
-  - 同时选全量目录和增量目录：自动执行“全量 + 从第一个增量到所选增量（含）的所有增量”组合还原  
-  - 出于 binlog 还原语义限制，**增量还原目前仅支持还原到与备份时相同的数据库名**（UI 会在库名不一致时禁用“执行还原”按钮并给出提示）
-- **数据库实例信息**（新增）  
-  - 集中管理多套数据库连接配置（名称、主机、端口、用户名、密码、数据库名），保存在 `backup-plans.json` 中  
-  - 在“数据备份”“数据还原”中可通过下拉框选择实例，一键带出连接信息，无需重复填写  
-  - 支持实例级“测试连接”，删除实例前会检查是否仍存在关联定时任务
-- **任务调度**（新增）  
-  - 基于某条“数据库实例信息”配置定时全量备份任务（备份类型、表过滤、清理天数、是否 gzip、cron 表达式等）  
-  - 状态支持“运行/停止”，运行中由容器内 cron + `mysql-backup-schema-data.sh` 自动按点执行备份  
-  - 支持在 UI 中新增 / 编辑 / 运行 / 停止 / 删除任务，并查看单任务运行日志  
-  - 所有调度任务以 `jobs` 字段存储在 `backup-plans.json` 中；运行态会在 `/data/backup/mysql/jobs/` 下生成对应 `job_xxx.sh`，并在 `/data/backup/mysql/job-logs/` 下记录触发日志与脚本输出  
+  - 仅选全量目录：使用 **myloader** 执行全量还原  
+  - 同时选择全量与某一增量目录：自动执行「全量 + 从第一个增量到所选增量（含）」的组合还原  
+  - 出于 binlog 还原语义限制，**增量还原目前仅支持还原到与备份时相同的数据库名**（UI 会在库名不一致时禁用「执行还原」并提示）
+- **数据库实例**  
+  - 集中管理多套连接配置（名称、主机、端口、用户、密码、库名），持久化在 **`backup_data/json/db-instances.json`**（按登录账号隔离可见数据）  
+  - 在「数据备份」「数据还原」等流程中可下拉选择实例，一键带出连接信息  
+  - 支持「测试连接」；删除实例前会检查是否仍有定时任务引用该实例
+- **任务调度**  
+  - 为指定实例配置 **Cron 表达式**、**全量或增量**备份、表过滤、`clean_days` 等；增量任务需关联一条全量定时任务作为基线  
+  - 任务配置保存在 **`backup_data/json/backup-jobs.json`**；启用后由系统 **crontab** 按点执行 **`/app/backup_data/jobs/<job_id>.sh`**（与宿主机挂载目录对应为 `backup_data/jobs/`），脚本通过 `curl` 调用 **`POST /api/backup-jobs/<id>/execute`** 触发后端执行备份（与页面手动备份同源逻辑）  
+  - UI 支持新增 / 编辑 / 运行 / 停止 / 删除任务，以及查看单任务调度与执行日志（如 **`backup_data/jobs/logs/`**，容器内 `/app/backup_data/jobs/logs/`）  
 
-> 关于“数据库实例信息”和“任务调度”的完整介绍与截图，可参考 `docs/backup-tool-share-instance-and-schedule.md`。
+> 关于「数据库实例」与「任务调度」的更细说明与截图，可参考 `docs/backup-tool-share-instance-and-schedule.md`；增量定时与链式关系可参考 `docs/backup-tool-scheduled-incremental.md`。
 
 
 ## 自行构建镜像
@@ -65,321 +81,522 @@ cd db-backup-management
 docker build -t db-backup-management:latest .
 ```
 
-若官方源出现 502，可使用国内镜像构建：
-
-```bash
-# 阿里云镜像
-docker build --build-arg APT_MIRROR=aliyun -t db-backup-management:latest .
-
-# 清华镜像
-docker build --build-arg APT_MIRROR=tsinghua -t db-backup-management:latest .
-```
-
 ## 挂载说明
 
 | 容器路径 | 说明 |
 |---------|------|
-| `/scripts` | 备份与还原脚本，可挂载宿主机脚本覆盖镜像内默认脚本 |
-| `/data/backup/mysql` | 备份文件存储目录，建议挂载宿主机目录持久化 |
+| /app/backup_data | 账号与鉴权、数据库实例配置、定时任务配置、备份文件元数据、备份数据目录及 `jobs/` 定时脚本等，建议挂载宿主机目录持久化 |
 
-### HTTP 接口
+## 数据存储结构
 
-**POST /db/test-connection** - 测试数据库连接
+### 备份数据目录结构
 
-```bash
-curl -X POST http://localhost:8081/db/test-connection -H "Content-Type: application/json" -d '{"host":"127.0.0.1","port":3306,"user":"root","password":"密码","database":"mall"}'
+```
+backup_data/
+├── jobs/             # 定时任务：crontab 调用的 job_xxx.sh 与 logs/ 执行日志
+├── data/             # 备份数据存储目录
+│   ├── mall_20260325_230118/  # 备份会话目录（格式：数据库名_年月日_时分秒）
+│   │   ├── data/     # 数据文件目录
+│   │   │   ├── mall-schema-create.sql.zst    		 # 数据库创建语句
+│   │   │   ├── mall.base_tenant-schema.sql.zst    # 表结构文件
+│   │   │   ├── mall.base_user-schema.sql.zst      # 表结构文件
+│   │   │   ├── mall.base_user.00000.sql.zst       # 数据文件
+│   │   │   ├── ...                  # 其他表结构和数据文件
+│   │   │   └── metadata             # mydumper 元数据文件
+│   │   └── meta/     # 元数据目录
+│   │       └── backup-options.json  # 备份配置选项
+│   └── ...           # 其他备份会话目录
+└── json/             # 后端持久化数据
+    ├── db-instances.json   # 数据库实例配置
+    ├── backup-jobs.json    # 备份任务配置
+    ├── backup-files.json   # 备份文件记录
+    ├── account.json        # 用户账号信息
+    └── timezone.json       # 用户时区设置
 ```
 
-**POST /db/backup** - 执行全量备份
+### 数据文件格式
 
-```bash
-curl -X POST http://localhost:8081/db/backup -H "Content-Type: application/json" -d '{"host":"MySQL主机","port":3306,"user":"root","password":"密码","database":"mall","backup_dir":"/data/backup/mysql"}'
-```
+- 表结构文件：`{数据库名}.{表名}-schema.sql.zst`
+- 数据文件：`{数据库名}.{表名}.{分片号}.sql.zst`
+- 数据库创建文件：`{数据库名}-schema-create.sql.zst`
+- 元数据文件：`metadata`（包含表结构和数据信息）
 
-可选参数：`tables`（白名单表）、`ignore_tables`（黑名单表）、`clean_days`（清理 N 天前备份）
+## 登录认证方式
 
-**POST /db/backup-incremental** - 基于某次全量备份执行一次 binlog 增量备份
+1. **怎么登录**  
+   调用 `POST /api/auth/login`，响应里会带上 `accessToken`（浏览器里由前端自动处理；自己写脚本或 Apifox 时把 Token 记下来用即可）。
 
-```bash
-curl -X POST http://localhost:8081/db/backup-incremental \
-  -H "Content-Type: application/json" \
-  -d '{
-    "host": "MySQL主机",
-    "port": 3306,
-    "user": "root",
-    "password": "密码",
-    "database": "mall",
-    "full_backup_dir": "/data/backup/mysql/mall_20260302_222859"
-  }'
-```
+2. **怎么调需要登录的接口**  
+   每个请求加请求头：`Authorization: Bearer <accessToken>`。
 
-- 不传 `start_file` / `start_pos` 时，起始位点规则为：
-  - 若该全量备份目录下**已有增量备份**：从“最后一个增量”的 `meta/binlog_to.json` 中读取结束位点，作为本次增量的起点，形成连续增量链（全量 → inc1 → inc2 → …）；  
-  - 否则：从该全量备份目录的 `meta/tables-binlog.json` 中选择最新的记录作为起点。
-- 每次增量备份会在对应全量目录下创建：  
-  - `<full_backup_dir>/incremental/<db>_inc_YYYYMMDD_HHMMSS/changes.sql`  
-  - `meta/binlog_from.json`、`meta/binlog_to.json` 记录起止位点与时间。
+3. **定时任务专用接口（不用用户 Token）**  
+   `POST /api/backup-jobs/<id>/execute` 给 **cron 里的 shell 脚本**用，**不要**带登录 Token。更安全的方式：设置环境变量 **`BACKUP_CRON_SECRET`**，脚本里用请求头 **`X-Backup-Cron-Secret`** 传同一个值。若不配密钥：仅当请求来自本机 **`127.0.0.1` / `::1`** 时，默认仍可能放行。
 
-**GET /db/incrementals** - 查询某次全量备份下的增量备份列表
+4. **Token 和登录加密密钥放哪**  
+   会写到持久化目录 **`json/auth-tokens.json`**、**`json/rsa-login-sessions.json`**（与上文 `backup_data` 挂载对应）。这样多台后端进程轮流处理请求时，也不会再出现「RSA 无效」或「刚登录又像没登录」。
 
-```bash
-curl "http://localhost:8081/db/incrementals?full_backup_dir=/data/backup/mysql/mall_20260302_222859"
-```
+5. **Apifox / curl 测登录**  
+   请求体只发 **`username`**、**`password`** 两个字段即可，不要从网页里复制加密后的字段（见下文示例）。
 
-返回：该全量备份目录下 `incremental/` 子目录中的所有增量，包含：
-- `database`：增量所属数据库名
-- `incrementalDir`：增量目录绝对路径
-- `binlogFrom` / `binlogTo`：起始/结束位点及时间
+### 认证相关
 
-**POST /db/restore** - 执行还原
+| 接口                 | 方法 | 描述                              |
+| -------------------- | ---- | --------------------------------- |
+| `/api/auth/rsa`      | GET  | 获取 RSA 公钥（用于登录密码加密） |
+| `/api/auth/login`    | POST | 登录，返回 accessToken            |
+| `/api/auth/register` | POST | 注册新用户                        |
+| `/api/auth/password` | POST | 修改当前登录用户密码              |
+| `/api/auth/logout`   | POST | 退出登录                          |
+| `/api/auth/refresh`  | POST | 刷新 accessToken                  |
+| `/api/auth/codes`    | GET  | 获取认证码                        |
+| `/api/user/info`     | GET  | 获取用户信息                      |
+| `/api/menu/all`      | GET  | 获取菜单列表                      |
 
-```bash
-curl -X POST http://localhost:8081/db/restore \
-  -H "Content-Type: application/json" \
-  -d '{
-    "backup_dir":"/data/backup/mysql/mall_20260302_222859",
-    "target_db":"mall",
-    "host":"MySQL主机",
-    "user":"root",
-    "password":"密码",
-    "incremental_dir":"/data/backup/mysql/mall_20260302_222859/incremental/mall_inc_20260303_101010"
-  }'
-```
+#### 认证相关接口请求案例
 
-- 不传 `incremental_dir`：仅执行全量还原；
-- 传入某个 `incremental_dir`：后端会：
-  - 在该全量备份目录下按时间升序获取所有增量目录；
-  - 从第一个增量开始一直到所选增量（含）形成一条连续链；
-  - 调用 `mysql-restore-incremental.sh`，内部先执行全量还原，再按顺序回放这条链上的每个 `changes.sql`。
+1. **获取 RSA 公钥** (`/api/auth/rsa`)
 
-可选参数：`tables`（仅恢复指定表）、`ignore_tables`（不恢复的表）、`overwrite_tables`（覆盖的表）——仅在纯全量还原时生效，含增量还原时会忽略这些表级过滤。
+   ```bash
+   curl -X GET http://localhost:8081/api/auth/rsa
+   ```
 
-**GET /db/backups** - 查询已备份文件列表
+2. **登录** (`/api/auth/login`)
 
-```bash
-curl "http://localhost:8081/db/backups"
-# 按数据库名筛选
-curl "http://localhost:8081/db/backups?database=mall"
-```
+   ```bash
+   curl -X POST http://localhost:8081/api/auth/login \
+     -H "Content-Type: application/json" \
+     -d '{
+       "username": "admin",
+       "password": "123456"
+     }'
+   ```
 
-返回：`database`、`backupTime`、`backupDir`、`dirName`、`size` 等
+3. **注册新用户** (`/api/auth/register`)
 
-**GET /db/backups/<dir_name>/tables** - 获取备份包含的表/视图列表
+   ```bash
+   curl -X POST http://localhost:8081/api/auth/register \
+     -H "Content-Type: application/json" \
+     -d '{
+       "username": "user1",
+       "password": "123456"
+     }'
+   ```
 
-**DELETE /db/backups/<dir_name>** - 删除指定备份
+4. **修改密码** (`/api/auth/password`)
 
-```bash
-curl -X DELETE "http://localhost:8081/db/backups/mall_20250209_020000"
-```
+   ```bash
+   curl -X POST http://localhost:8081/api/auth/password \
+     -H "Authorization: Bearer <accessToken>" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "oldPassword": "123456",
+       "newPassword": "654321"
+     }'
+   ```
 
-**GET /db/backups/<dir_name>/log** - 获取某次备份的备份/还原日志（前端用于“备份日志/还原日志”弹窗）
+5. **退出登录** (`/api/auth/logout`)
 
-```bash
-curl "http://localhost:8081/db/backups/mall_20260302_222859/log?type=backup"
-curl "http://localhost:8081/db/backups/mall_20260302_222859/log?type=restore"
-```
+   ```bash
+   curl -X POST http://localhost:8081/api/auth/logout \
+     -H "Authorization: Bearer <accessToken>"
+   ```
 
----
+6. **刷新 accessToken** (`/api/auth/refresh`)
 
-### HTTP 接口：数据库实例信息与任务调度
+   ```bash
+   curl -X POST http://localhost:8081/api/auth/refresh \
+     -H "Cookie: refreshToken=<refreshToken>"
+   ```
 
-**GET /backup-plans** - 列出所有数据库实例信息（不返回密码）
+7. **获取认证码** (`/api/auth/codes`)
 
-```bash
-curl "http://localhost:8081/backup-plans"
-```
+   ```bash
+   curl -X GET http://localhost:8081/api/auth/codes \
+     -H "Authorization: Bearer <accessToken>"
+   ```
 
-**POST /backup-plans** - 新增数据库实例信息
+8. **获取用户信息** (`/api/user/info`)
 
-```bash
-curl -X POST http://localhost:8081/backup-plans \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "mall-dev",
-    "host": "43.138.193.177",
-    "port": 3306,
-    "user": "root",
-    "password": "密码",
-    "database": "mall",
-    "backup_dir": "/data/backup/mysql"
-  }'
-```
+   ```bash
+   curl -X GET http://localhost:8081/api/user/info \
+     -H "Authorization: Bearer <accessToken>"
+   ```
 
-**GET /backup-plans/<plan_id>** - 获取单个实例详情（包含密码，供前端填充表单）
+9. **获取菜单列表** (`/api/menu/all`)
 
-```bash
-curl "http://localhost:8081/backup-plans/plan_1773382601991"
-```
+   ```bash
+   curl -X GET http://localhost:8081/api/menu/all \
+     -H "Authorization: Bearer <accessToken>"
+   ```
 
-**PUT /backup-plans/<plan_id>** - 更新实例信息（仅连接相关字段）
+### 数据库实例管理
 
-```bash
-curl -X PUT http://localhost:8081/backup-plans/plan_1773382601991 \
-  -H "Content-Type: application/json" \
-  -d '{ "host": "127.0.0.1", "port": 3307 }'
-```
+| 接口                                | 方法   | 描述               |
+| ----------------------------------- | ------ | ------------------ |
+| `/api/db-instances`                 | GET    | 获取数据库实例列表 |
+| `/api/db-instances`                 | POST   | 新增数据库实例     |
+| `/api/db-instances/<id>`            | PUT    | 编辑数据库实例     |
+| `/api/db-instances/<id>`            | DELETE | 删除数据库实例     |
+| `/api/db-instances/test-connection` | POST   | 测试数据库连接     |
+| `/api/db-instances/<id>/backup`     | POST   | 立即执行该实例备份 |
+| `/api/db-instances/<id>/restore`    | POST   | 还原备份到目标库   |
 
-**DELETE /backup-plans/<plan_id>** - 删除实例（若仍存在 jobs 会返回 400 并拒绝删除）
+#### 数据库实例管理接口请求案例
 
-```bash
-curl -X DELETE "http://localhost:8081/backup-plans/plan_1773382601991"
-```
+1. **获取数据库实例列表** (`/api/db-instances`)
 
-**POST /backup-plans/<plan_id>/jobs** - 在某实例下新增一条定时备份任务
+   ```bash
+   curl -X GET http://localhost:8081/api/db-instances \
+     -H "Authorization: Bearer <accessToken>"
+   ```
 
-```bash
-curl -X POST http://localhost:8081/backup-plans/plan_1773382601991/jobs \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "每天凌晨1点全量备份mall数据库",
-    "schedule": "0 1 * * *",
-    "backup_type": "full",
-    "tables": "",
-    "ignore_tables": "",
-    "clean_days": 0,
-    "enable_gzip": true,
-    "enabled": false
-  }'
-```
+2. **新增数据库实例** (`/api/db-instances`)
 
-**PUT /backup-plans/<plan_id>/jobs/<job_id>** - 更新定时任务（名称、cron、表过滤、清理天数、gzip、enabled 等）
+   ```bash
+   curl -X POST http://localhost:8081/api/db-instances \
+     -H "Authorization: Bearer <accessToken>" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "id": "db_1",
+       "name": "测试数据库",
+       "host": "localhost",
+       "port": 3306,
+       "user": "root",
+       "password": "123456",
+       "database": "mall"
+     }'
+   ```
 
-```bash
-curl -X PUT http://localhost:8081/backup-plans/plan_1773382601991/jobs/job_1773394757637 \
-  -H "Content-Type: application/json" \
-  -d '{ "schedule": "0 2 * * *", "enabled": true }'
-```
+3. **编辑数据库实例** (`/api/db-instances/<id>`)
 
-**DELETE /backup-plans/<plan_id>/jobs/<job_id>** - 删除定时任务（运行中任务不允许删除）
+   ```bash
+   curl -X PUT http://localhost:8081/api/db-instances/db_1 \
+     -H "Authorization: Bearer <accessToken>" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "name": "测试数据库（修改）",
+       "host": "localhost",
+       "port": 3306,
+       "user": "root",
+       "password": "123456",
+       "database": "mall"
+     }'
+   ```
 
-```bash
-curl -X DELETE "http://localhost:8081/backup-plans/plan_1773382601991/jobs/job_1773394757637"
-```
+4. **删除数据库实例** (`/api/db-instances/<id>`)
 
-**GET /scheduled-tasks** - 查询所有定时备份任务列表（聚合自 `backup-plans.json` 中的 `plans[].jobs[]`）
+   ```bash
+   curl -X DELETE http://localhost:8081/api/db-instances/db_1 \
+     -H "Authorization: Bearer <accessToken>"
+   ```
 
-```bash
-curl "http://localhost:8081/scheduled-tasks"
-```
+5. **测试数据库连接** (`/api/db-instances/test-connection`)
 
-**GET /scheduled-tasks/<job_id>/log** - 查看指定任务的合并日志（元事件 + 运行输出）
+   ```bash
+   curl -X POST http://localhost:8081/api/db-instances/test-connection \
+     -H "Authorization: Bearer <accessToken>" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "host": "localhost",
+       "port": 3306,
+       "user": "root",
+       "password": "123456",
+       "database": "mall"
+     }'
+   ```
 
-```bash
-curl "http://localhost:8081/scheduled-tasks/job_1773394757637/log"
-```
+6. **立即执行实例备份** (`/api/db-instances/<id>/backup`)
 
-**GET /db/backup-options** - 查询某次全量备份的表过滤条件（供增量备份 UI 继承）
+   ```bash
+   curl -X POST http://localhost:8081/api/db-instances/db_1/backup \
+     -H "Authorization: Bearer <accessToken>" \
+     -H "Content-Type: application/json" \
+     -d '{}'
+   ```
 
-```bash
-curl "http://localhost:8081/db/backup-options?full_backup_dir=/data/backup/mysql/mall_20260302_222859"
-```
+7. **还原备份到目标库** (`/api/db-instances/<id>/restore`)
 
-**GET /health** - 健康检查
+   ```bash
+   curl -X POST http://localhost:8081/api/db-instances/db_1/restore \
+     -H "Authorization: Bearer <accessToken>" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "dir_name": "mall_20260325_230118",
+       "target_database": "mall"
+     }'
+   ```
+
+### 备份任务管理
+
+| 接口                            | 方法         | 描述                                    |
+| ------------------------------- | ------------ | --------------------------------------- |
+| `/api/backup-jobs`              | GET          | 获取备份任务列表                        |
+| `/api/backup-jobs`              | POST         | 新增备份任务                            |
+| `/api/backup-jobs/<id>`         | PUT          | 编辑备份任务                            |
+| `/api/backup-jobs/delete/<id>`  | POST（推荐） | 删除备份任务；勿在浏览器地址栏 GET 访问 |
+| `/api/backup-jobs/<id>`         | DELETE       | 删除备份任务（兼容旧版客户端）          |
+| `/api/backup-jobs/<id>/run`     | POST         | 运行备份任务                            |
+| `/api/backup-jobs/<id>/stop`    | POST         | 停止备份任务                            |
+| `/api/backup-jobs/<id>/execute` | POST         | 执行备份任务（供定时任务调用）          |
+| `/api/backup-jobs/<id>/log`     | GET          | 查看备份任务日志                        |
+
+#### 备份任务管理接口请求案例
+
+1. **获取备份任务列表** (`/api/backup-jobs`)
+
+   ```bash
+   curl -X GET http://localhost:8081/api/backup-jobs \
+     -H "Authorization: Bearer <accessToken>"
+   ```
+
+2. **新增备份任务** (`/api/backup-jobs`)
+
+   ```bash
+   curl -X POST http://localhost:8081/api/backup-jobs \
+     -H "Authorization: Bearer <accessToken>" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "id": "job_1",
+       "name": "每日备份",
+       "schedule": "0 0 * * *",
+       "backup_type": "full",
+       "db_instance_id": "db_1",
+       "clean_days": 7,
+       "enabled": true
+     }'
+   ```
+
+3. **编辑备份任务** (`/api/backup-jobs/<id>`)
+
+   ```bash
+   curl -X PUT http://localhost:8081/api/backup-jobs/job_1 \
+     -H "Authorization: Bearer <accessToken>" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "name": "每日备份（修改）",
+       "schedule": "0 1 * * *",
+       "backup_type": "full",
+       "db_instance_id": "db_1",
+       "clean_days": 10,
+       "enabled": true
+     }'
+   ```
+
+4. **删除备份任务**（`POST /api/backup-jobs/delete/<id>`，推荐；或 `DELETE /api/backup-jobs/<id>` 兼容旧版）
+
+   ```bash
+   curl -X POST http://localhost:8081/api/backup-jobs/delete/job_1 \
+     -H "Authorization: Bearer <accessToken>"
+   ```
+
+   若在浏览器地址栏直接打开删除 URL，浏览器会发 **GET**，接口会返回 **405** 与 JSON 提示（不会执行删除）；必须用 **POST** 或兼容的 **DELETE**。
+
+5. **运行备份任务** (`/api/backup-jobs/<id>/run`)
+
+   ```bash
+   curl -X POST http://localhost:8081/api/backup-jobs/job_1/run \
+     -H "Authorization: Bearer <accessToken>"
+   ```
+
+6. **停止备份任务** (`/api/backup-jobs/<id>/stop`)
+
+   ```bash
+   curl -X POST http://localhost:8081/api/backup-jobs/job_1/stop \
+     -H "Authorization: Bearer <accessToken>"
+   ```
+
+7. **执行备份任务（定时任务调用）** (`/api/backup-jobs/<id>/execute`)
+
+   ```bash
+   curl -X POST http://localhost:8081/api/backup-jobs/job_1/execute \
+     -H "X-Backup-Cron-Secret: <secret>"
+   ```
+
+8. **查看备份任务日志** (`/api/backup-jobs/<id>/log`)
+
+   ```bash
+   curl -X GET http://localhost:8081/api/backup-jobs/job_1/log \
+     -H "Authorization: Bearer <accessToken>"
+   ```
+
+### 备份文件管理
+
+| 接口                                   | 方法   | 描述               |
+| -------------------------------------- | ------ | ------------------ |
+| `/api/backup-files`                    | GET    | 获取备份文件列表   |
+| `/api/backup-files/<dirName>`          | DELETE | 删除备份文件       |
+| `/api/backup-files/<dirName>/download` | GET    | 下载备份文件       |
+| `/api/backup-files/<dirName>/tables`   | GET    | 查看备份文件中的表 |
+| `/api/backup-files/<dirName>/logs`     | GET    | 查看备份文件的日志 |
+
+#### 备份文件管理接口请求案例
+
+1. **获取备份文件列表** (`/api/backup-files`)
+
+   ```bash
+   curl -X GET http://localhost:8081/api/backup-files \
+     -H "Authorization: Bearer <accessToken>"
+   ```
+
+2. **删除备份文件** (`/api/backup-files/<dirName>`)
+
+   ```bash
+   curl -X DELETE http://localhost:8081/api/backup-files/mall_20260325_230118 \
+     -H "Authorization: Bearer <accessToken>"
+   ```
+
+3. **下载备份文件** (`/api/backup-files/<dirName>/download`)
+
+   ```bash
+   curl -X GET http://localhost:8081/api/backup-files/mall_20260325_230118/download \
+     -H "Authorization: Bearer <accessToken>" \
+     -o backup.tar.gz
+   ```
+
+4. **查看备份文件中的表** (`/api/backup-files/<dirName>/tables`)
+
+   ```bash
+   curl -X GET http://localhost:8081/api/backup-files/mall_20260325_230118/tables \
+     -H "Authorization: Bearer <accessToken>"
+   ```
+
+5. **查看备份文件的日志** (`/api/backup-files/<dirName>/logs`)
+
+   ```bash
+   curl -X GET http://localhost:8081/api/backup-files/mall_20260325_230118/logs \
+     -H "Authorization: Bearer <accessToken>"
+   ```
+
+### 系统管理
+
+| 接口                           | 方法 | 描述                 |
+| ------------------------------ | ---- | -------------------- |
+| `/api/system/role/list`        | GET  | 获取角色列表         |
+| `/api/system/menu/list`        | GET  | 获取菜单列表         |
+| `/api/system/menu/name-exists` | GET  | 检查菜单名称是否存在 |
+| `/api/system/menu/path-exists` | GET  | 检查菜单路径是否存在 |
+| `/api/system/dept/list`        | GET  | 获取部门列表         |
+
+#### 系统管理接口请求案例
+
+1. **获取角色列表** (`/api/system/role/list`)
+
+   ```bash
+   curl -X GET http://localhost:8081/api/system/role/list \
+     -H "Authorization: Bearer <accessToken>"
+   ```
+
+2. **获取菜单列表** (`/api/system/menu/list`)
+
+   ```bash
+   curl -X GET http://localhost:8081/api/system/menu/list \
+     -H "Authorization: Bearer <accessToken>"
+   ```
+
+3. **检查菜单名称是否存在** (`/api/system/menu/name-exists`)
+
+   ```bash
+   curl -X GET "http://localhost:8081/api/system/menu/name-exists?name=测试菜单" \
+     -H "Authorization: Bearer <accessToken>"
+   ```
+
+4. **检查菜单路径是否存在** (`/api/system/menu/path-exists`)
+
+   ```bash
+   curl -X GET "http://localhost:8081/api/system/menu/path-exists?path=/test" \
+     -H "Authorization: Bearer <accessToken>"
+   ```
+
+5. **获取部门列表** (`/api/system/dept/list`)
+
+   ```bash
+   curl -X GET http://localhost:8081/api/system/dept/list \
+     -H "Authorization: Bearer <accessToken>"
+   ```
+
 
 
 ## 脚本说明
 
-### `mysql-backup-schema-data.sh`（备份脚本）
+逻辑备份与增量导出脚本位于仓库 [`back/scripts/`](back/scripts/)；镜像内复制到 **`/app/backup/scripts`**。更细的目录约定、myloader 参数与旧版布局兼容说明见 [`back/scripts/README.md`](back/scripts/README.md)。
 
-- **功能**：备份单个 MySQL 数据库的表结构（含视图）和数据，支持大表拆分、多文件备份以及按库名、表名粒度控制。
-- **输出目录结构**：`<BACKUP_ROOT>/<数据库名>_YYYYMMDD_HHMMSS/{schema,data,backup.log}`。
-- **调用方式**：
-  - 容器内直接执行：`bash /scripts/mysql-backup-schema-data.sh [选项]`
-  - 通过 HTTP 接口：`POST /db/backup` 会在容器内调用该脚本并传递对应参数。
+后端默认从环境变量 **`SCRIPT_DIR`** 读取脚本目录，未设置时使用 **`${REPO_DIR}/scripts`**（与镜像布局一致）。备份数据根目录由业务侧传入 **`-b, --backup-dir`**，与持久化目录 **`${BACK_DIR}/data`**（默认如 `/app/backup_data/data`）对齐；**不再使用** 历史上的 `POST /db/backup`、`POST /db/restore` 等路径。即时备份 / 定时任务 / 还原由 **`POST /api/db-instances/<id>/backup`**、**`POST /api/backup-jobs/<id>/execute`**、**`POST /api/db-instances/<id>/restore`** 等接口驱动，具体见 [`back/db_instance_api.py`](back/db_instance_api.py) 文件头注释。
 
-#### 动态参数（命令行可设置）
+### `mysql-backup-mydumper.sh`（全量备份，mydumper）
 
-| 参数名 | 命令行选项 | 脚本默认值 | 说明 |
-|--------|------------|------------|------|
-| `DB_HOST` | `-H, --host` | `127.0.0.1` | MySQL 主机地址 |
-| `DB_PORT` | `-P, --port` | `3306` | MySQL 端口 |
-| `DB_USER` | `-u, --user` | `root` | 连接数据库的用户名 |
-| `DB_PASS` | `-p, --password` | `123456` | 对应用户密码 |
-| `DB_NAME` | `-d, --database` | `db_name` | 要备份的数据库名 |
-| `BACKUP_ROOT` | `-b, --backup-dir` | `/data/backup/mysql` | 备份根目录（不含时间戳） |
-| `TABLES_INCLUDE` | `-t, --tables` | 空 | 仅备份指定表，多个表用逗号分隔 |
-| `TABLES_EXCLUDE` | `-i, --ignore` | 空 | 不备份的表，多个表用逗号分隔；优先级高于 `TABLES_INCLUDE` |
-| `CLEAN_DAYS` | `-c, --clean` | 空（不清理） | 备份完成后清理当前数据库在 `BACKUP_ROOT` 下 **N 天前** 的旧备份目录（按目录修改时间，单位天） |
+- **功能**：使用 **mydumper** 对单库做逻辑备份；默认 **ZSTD** 压缩、按表分文件、结构/数据分离，不再使用旧版 mysqldump 的大表拆分逻辑。
+- **输出目录**（未指定 `--session-dir` 时）：`<BACKUP_ROOT>/<数据库名>_YYYYMMDD_HHMMSS/`，典型包含：
+  - `data/`：mydumper `--outputdir`，含 `metadata`、`*.sql.zst`、`*-schema.sql.zst` 等；
+  - `meta/backup-options.json`：脚本写入的备份选项；
+  - `backup.log`：含 mydumper 输出；可选「每表完成一行」进度（见脚本内说明）。
+- **调用示例**：`bash /app/backup/scripts/mysql-backup-mydumper.sh [选项]`
 
-> 通过 HTTP 接口 `POST /db/backup` 传入的 `host/port/user/password/database/backup_dir/tables/ignore_tables/clean_days`，由后端映射为上述命令行参数。
-
-#### 可调整参数（脚本内配置区）
-
-这些参数在脚本开头的“配置区”中定义，可按环境性能和日志需求手动修改：
-
-| 变量名 | 默认值 | 说明 |
-|--------|--------|------|
-| `ROW_THRESHOLD` | `100000` | 单表行数超过该值时，按多文件拆分备份 |
-| `CHUNK_SIZE` | `50000` | 每个数据分片文件最多包含的行数（影响单个 `.sql` 文件大小） |
-| `INSERT_BATCH` | `500` | 拆分备份时，每个多行 `INSERT` 中的记录条数，数值越大还原越快但单条 SQL 越长 |
-| `LOG_FILE` | 空 | 备份日志文件路径；为空时使用当前备份目录下的 `backup.log` |
-| `LOG_SIZE_LIMIT_MB` | `10` | 日志文件超过该大小（MB）时自动轮转为 `*.bak` 再继续写入 |
-
-
-### `mysql-restore-schema-data.sh`（全量还原脚本）
-
-- **功能**：从 `mysql-backup-schema-data.sh` 生成的备份目录中恢复数据库，支持表/视图分开还原、大表多文件顺序还原，以及按表名白名单 / 黑名单 / 覆盖策略控制。
-- **输入目录结构**：需要指向包含 `schema/`、`data/`、`backup.log`/`restore.log` 等文件的备份目录。
-- **调用方式**：
-  - 容器内直接执行：`bash /scripts/mysql-restore-schema-data.sh [选项]`
-  - 通过 HTTP 接口：`POST /db/restore` 会在容器内调用该脚本并传递对应参数。
-
-#### 动态参数（命令行可设置）
+#### 主要命令行参数
 
 | 参数名 | 命令行选项 | 脚本默认值 | 说明 |
 |--------|------------|------------|------|
-| `BACKUP_DIR` | `-b, --backup-dir`（或位置参数 1） | 无默认值，必填 | 备份目录路径，如 `/data/backup/mysql/mall_20250209_020000` |
-| `NEW_DB_NAME` | `-d, --database`（或位置参数 2） | 无默认值，必填 | 恢复到的新数据库名，如 `mall_restored` |
-| `DB_HOST` | `-H, --host` | `localhost` | MySQL 主机地址 |
-| `DB_PORT` | `-P, --port` | `3306` | MySQL 端口 |
-| `DB_USER` | `-u, --user` | `root` | 恢复操作使用的数据库用户，需要有建库/建表权限 |
-| `DB_PASS` | `-p, --password` | `123456` | 对应用户密码 |
-| `LOG_FILE` | `-l, --log-file` | 空 | 还原日志路径；为空时使用备份目录下的 `restore.log` |
-| `LOG_SIZE_LIMIT_MB` | `-L, --log-limit` | `10` | 日志文件超过该大小（MB）时轮转备份 |
-| `TARGET_TABLES` | `-t, --tables` | 空 | 仅恢复指定表，多个表用逗号分隔 |
-| `IGNORE_TABLES` | `-i, --ignore` | 空 | 不恢复的表，多个表用逗号分隔；与 `TARGET_TABLES` 同时使用时从白名单中排除 |
-| `OVERWRITE_TABLES` | `-o, --overwrite` | 空 | 用备份数据覆盖的表名列表；若仅指定 `-o` 未指定 `-t`，则自动把 `OVERWRITE_TABLES` 作为 `TARGET_TABLES` |
+| `DB_HOST` | `-H, --host` | `127.0.0.1` | MySQL 主机 |
+| `DB_PORT` | `-P, --port` | `3306` | 端口 |
+| `DB_USER` | `-u, --user` | `root` | 用户名 |
+| `DB_PASS` | `-p, --password` | 空 | 密码 |
+| `DB_NAME` | `-d, --database` | `db_name` | 数据库名 |
+| `BACKUP_ROOT` | `-b, --backup-dir` | `/app/backup/data` | 备份根目录；实际会话目录为其下带时间戳的子目录，或由 `--session-dir` 指定 |
+| 会话目录 | `--session-dir` | 空 | 本次备份会话**绝对路径**，须位于 `-b` 之下；与自动时间戳目录二选一（供服务端预登记） |
+| `TABLES_INCLUDE` | `-t, --tables` | 空 | 仅备份指定表，逗号分隔；与 `-i` 同时存在时先取白名单再在结果上排除 |
+| `TABLES_EXCLUDE` | `-i, --ignore` | 空 | 不备份的表，逗号分隔 |
+| `CLEAN_DAYS` | `-c, --clean` | 空（不清理） | 备份完成后清理 `BACKUP_ROOT` 下该库前缀目录中 **N 天前** 的旧目录 |
+| — | `--threads` | `4` | mydumper 线程数 |
+| — | `--max-threads-per-table` | `1` | 单表并行上限（建议保持 1，避免部分版本「file already open」） |
+| — | `--compress` | `zstd` | 压缩算法；`none` 可关闭（若版本支持） |
 
-#### 可调整参数（脚本内配置区）
+环境变量 **`MYDUMPER_BIN`**、以及脚本内 **`LOG_FILE` / `LOG_SIZE_LIMIT_MB`**、表进度监控相关变量见脚本开头配置区。
 
-| 变量名 | 默认值 | 说明 |
-|--------|--------|------|
-| `DB_HOST` | `localhost` | 还原脚本默认连接的主机，可通过命令行覆盖 |
-| `DB_PORT` | `3306` | 默认端口，可通过命令行覆盖 |
-| `DB_USER` | `root` | 默认还原用户，可通过命令行覆盖 |
-| `DB_PASS` | `123456` | 默认密码，可通过命令行覆盖 |
-| `LOG_FILE` | 空 | 默认还原日志路径，通常保持为空使用备份目录下的 `restore.log` |
-| `LOG_SIZE_LIMIT_MB` | `10` | 日志文件超过该大小（MB）时自动轮转为 `*.bak` |
+### `mysql-restore-mydumper.sh`（全量还原，myloader）
 
-> 日志行为：每次还原会在 `restore.log` 中追加一段带分隔线的记录；当“全量 + 增量还原”时，增量脚本会复用同一份 `restore.log`，整个流程日志连贯。
+- **功能**：使用 **myloader** 将 mydumper 会话目录还原到目标库；支持 **`data/metadata`**（新版，推荐）与 **`metadata` 在会话根**（旧版）两种布局。
+- **必填**：`-d, --database`（目标库）、`-s, --source-dir`（备份会话根目录绝对路径）。
+- **源库与目标库不同**：须加 **`--source-db`**，与 myloader 的 `--source-db` 一致。
+- **日志**：默认追加写入会话目录下的 **`restore.log`**（脚本内 `LOG_FILE` 可改）。
+- **调用示例**：`bash /app/backup/scripts/mysql-restore-mydumper.sh [选项]`
 
-### `mysql-backup-incremental.sh`（增量备份脚本）
+#### 主要命令行参数
 
-- **功能**：基于某次已完成的全量备份，从指定 binlog 起始位点开始抽取变更并生成增量 SQL 文件 `changes.sql`，同时记录起止位点元数据。
-- **目录结构**：  
-  - 全量备份目录：`/data/backup/mysql/<db>_YYYYMMDD_HHMMSS/`  
-  - 增量备份目录：`/data/backup/mysql/<db>_YYYYMMDD_HHMMSS/incremental/<db>_inc_YYYYMMDD_HHMMSS/`
-    - `changes.sql`：当前增量的 binlog 变更（按 `--database=<db>` 过滤）
-    - `meta/binlog_from.json`：起始 `binlog_file` / `binlog_pos` / `recorded_at` 等
-    - `meta/binlog_to.json`：结束 `binlog_file` / `binlog_pos` / `recorded_at` 等
-- **起点选择策略**（不显式指定 `--start-file/--start-pos` 时）：  
-  1. 若该全量目录下存在历史增量：从“最后一个增量的 `binlog_to`”开始，此时增量链为：**全量 → inc1 → inc2 → … → 本次 incN**；  
-  2. 若不存在历史增量：从全量备份目录 `meta/tables-binlog.json` 中记录的最新位点开始。
-- **调用方式**：
-  - 容器内直接执行：`bash /scripts/mysql-backup-incremental.sh [选项]`
-  - 通过 HTTP 接口：`POST /db/backup-incremental`。
+| 参数名 | 命令行选项 | 脚本默认值 | 说明 |
+|--------|------------|------------|------|
+| `DB_HOST` | `-H, --host` | `127.0.0.1` | MySQL 主机 |
+| `DB_PORT` | `-P, --port` | `3306` | 端口 |
+| `DB_USER` | `-u, --user` | `root` | 用户 |
+| `DB_PASS` | `-p, --password` | 空 | 密码 |
+| `TARGET_DB` | `-d, --database` | 必填 | 还原到的目标库名 |
+| `SOURCE_DIR` | `-s, --source-dir` | 必填 | 备份会话根目录 |
+| `SOURCE_DB` | `--source-db` | 空 | 备份中的源库名；与 `-d` 不同时必须指定 |
+| — | `--threads` | `4` | myloader 线程数 |
+| — | `--drop-table` | `DROP` | 删表策略（如 `NONE` 则表已存在会失败） |
+| `TABLES_INCLUDE` | `-t, --tables` | 空 | 仅还原指定表，逗号分隔短表名 |
+| `TABLES_EXCLUDE` | `-i, --ignore` | 空 | 不还原的表，逗号分隔（`--omit-from-file`） |
 
-### `mysql-restore-incremental.sh`（全量 + 增量组合还原脚本）
+环境变量 **`MYLOADER_BIN`**、**`DROP_TABLE_MODE`**、**`THREADS`** 与脚本说明一致。
 
-- **功能**：基于某次全量备份 + 一条连续的增量链，自动完成“先全量还原，再顺序回放增量变更”的组合还原。
-- **输入参数**（内部由 `/db/restore` 构造）：  
-  - `-b, --full-backup-dir`：全量备份目录  
-  - `-d, --database`：目标数据库名（当前版本要求与备份时数据库同名）  
-  - `-i, --incremental-dirs`：按时间顺序排列的一组增量目录，逗号分隔  
-  - 连接信息、日志路径等。
-- **核心步骤**：
-  1. 解析首个增量的 `meta/binlog_from.json` 获取来源数据库名；
-  2. 调用 `mysql-restore-schema-data.sh` 执行一次全量还原（日志写入同一个 `restore.log`）；
-  3. 对每个增量目录依次执行 `changes.sql`：
-     - 若来源库名与目标库名不同，会在应用前对 `changes.sql` 做轻量重写（调整 `USE \`db\`;` 和 `` `db`. `` 前缀），以尽量保证变更落在目标库；
-     - 受 MySQL binlog 语义影响，当前版本仍要求“增量还原仅支持同名库”，异名目标库仅作为内部过渡方案使用，UI 层已做限制。
+### `mysql-backup-binlog.sh`（增量导出，mysqlbinlog）
+
+- **功能**：按给定的 **起始/结束 binlog 文件与位点**，通过 **`mysqlbinlog --read-from-remote-server`** 拉取可 **`mysql` 回放** 的事件流（**不能**使用仅含 `###` 注释的可读格式，否则还原无效；应用脚本会检测并报错）。
+- **输出目录**：`<BACKUP_ROOT>/<数据库名>_inc_YYYYMMDD_HHMMSS/`（或使用 **`--session-dir`** 指定已有目录），包含：
+  - `binlog/<日志名>.sql`：按文件切分的导出；
+  - `meta/increment-info.json`：起止位点、`database`、`full_backup_file_id`（可选）等元数据；
+  - `backup.log`。
+- **必填**：`-d, --database`，以及 **`--start-log-file` / `--start-log-pos` / `--end-log-file` / `--end-log-pos`**。
+- **调用示例**：`bash /app/backup/scripts/mysql-backup-binlog.sh [选项]`
+
+环境变量 **`MYSQL_BIN`**、**`MYSQLBINLOG_BIN`** 可覆盖默认可执行文件。
+
+### `mysql-apply-binlog-increment.sh`（增量回放）
+
+- **功能**：对单个**增量会话目录**下的 **`binlog/*.sql`** 按文件名排序，依次 **`mysql` 导入**到目标库。
+- **必填**：`-d, --database`（目标库）、`-s, --source-dir`（增量目录）。
+- 若无 `binlog` 目录或无 `.sql` 文件，脚本会**跳过**（视为无增量）。
+- **依赖**：脚本内使用 **`rg`** 校验导出格式；需与运行环境一致（项目镜像已包含则无需额外安装）。
+- **调用示例**：`bash /app/backup/scripts/mysql-apply-binlog-increment.sh [选项]`
+
+### 组合还原（全量 + 增量）
+
+当前实现为：**先** 调用 **`mysql-restore-mydumper.sh`** 完成全量（myloader），**再** 按业务编排对每个增量目录调用 **`mysql-apply-binlog-increment.sh`**；位点选择与增量链路由后端与 UI 约束，不再使用旧版单脚本 `mysql-restore-incremental.sh` 与 `changes.sql` 方案。
