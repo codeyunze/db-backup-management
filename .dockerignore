@@ -1,0 +1,8 @@
+# 根目录 Dockerfile 构建上下文：减小体积、避免把宿主机 node_modules/dist 打进镜像
+.git
+**/.DS_Store
+web/node_modules
+web/.turbo
+web/**/.turbo
+web/playground/dist
+web/apps/*/dist

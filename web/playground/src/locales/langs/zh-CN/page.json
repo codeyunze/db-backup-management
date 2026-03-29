@@ -1,0 +1,286 @@
+{
+  "auth": {
+    "login": "登录",
+    "register": "注册",
+    "codeLogin": "验证码登录",
+    "qrcodeLogin": "二维码登录",
+    "forgetPassword": "忘记密码",
+    "sendingCode": "正在发送验证码",
+    "codeSentTo": "验证码已发送至{0}",
+    "profile": "个人中心"
+  },
+  "dashboard": {
+    "title": "概览",
+    "analytics": "分析页",
+    "workspace": "工作台"
+  },
+  "backup": {
+    "management": "备份管理",
+    "dbInstance": "数据库实例",
+    "backupFiles": "备份文件",
+    "jobSchedule": "任务调度",
+    "dbInstancePage": {
+      "management": "数据库实例管理",
+      "addInstance": "新增实例",
+      "editButton": "编辑",
+      "deleteButton": "删除",
+      "operations": "操作",
+
+      "keyword": "关键字",
+      "keywordPlaceholder": "名称 / 主机 / 数据库",
+
+      "seq": "序号",
+      "instanceName": "实例名称",
+      "host": "主机",
+      "port": "端口",
+      "databaseName": "数据库名",
+      "userName": "用户名",
+      "password": "密码",
+
+      "createTitle": "新增数据库实例",
+      "editTitle": "编辑数据库实例",
+
+      "requiredInstanceName": "请输入实例名称",
+      "requiredDatabaseName": "请输入数据库名",
+      "requiredHost": "请输入主机地址",
+      "requiredPort": "请输入端口",
+      "requiredUserName": "请输入用户名",
+      "requiredPassword": "请输入密码",
+
+      "testConnection": "测试连接",
+      "connectSuccess": "连接成功",
+
+      "deleteTitle": "确认删除",
+      "deleteContent": "确定删除数据库实例「{0}」吗？",
+      "createSuccess": "新增成功",
+      "editSuccess": "编辑成功",
+      "deleteSuccess": "删除成功"
+    }
+    ,
+    "backupFilesPage": {
+      "keyword": "关键字",
+      "keywordPlaceholder": "数据库名 / 目录名 / 路径",
+
+      "seq": "序号",
+      "databaseName": "数据库名",
+      "dirName": "目录名",
+      "backupTime": "备份时间",
+      "fileSize": "文件大小",
+      "operations": "操作",
+
+      "actionTables": "查看表",
+      "actionViewIncrement": "增量备份",
+      "actionLogs": "日志",
+      "actionDownload": "下载",
+      "actionRestore": "数据还原",
+
+      "showTotal": "共 {0} 条",
+
+      "loadLogsFailed": "加载日志失败",
+      "refreshLogsSuccess": "日志已刷新",
+      "refreshLogsFailed": "刷新日志失败",
+      "loadBackupObjectsFailed": "加载备份对象列表失败",
+      "downloadStarted": "已开始下载",
+      "downloadFailed": "下载失败",
+
+      "confirmDeleteTitle": "确认删除",
+      "confirmDeleteContent": "确定删除备份「{0}」吗？将同时删除列表记录与服务器上已解析到的备份目录（若目录不存在则仅删除记录）。",
+      "deleteSuccess": "删除成功",
+
+      "drawerBackupDataTitle": "备份数据",
+      "drawerRestoreDataTitle": "数据还原",
+      "drawerIncrementTitle": "增量备份记录",
+      "startIncrementBackup": "开始备份",
+      "drawerTablesTitle": "备份包含的表与视图",
+      "drawerLogsTitle": "备份 / 还原日志",
+      "binlogRange": "Binlog 范围",
+
+      "tablesKindTable": "表",
+      "tablesKindView": "视图",
+
+      "type": "类型",
+      "schema": "Schema",
+      "name": "名称",
+      "rows": "行数",
+
+      "directory": "目录",
+      "database": "数据库",
+      "total": "共",
+      "tablesCountSuffix": "张表、",
+      "viewsCountSuffix": "个视图",
+      "sourceLabel": "来源",
+      "sourceFromFilenames": "data 目录下 .sql.zst 文件名推断（无完整 metadata 时）",
+      "sourceFromMydumper": "mydumper metadata",
+
+      "tabAll": "全部",
+      "tabTable": "表",
+      "tabView": "视图",
+
+      "refresh": "刷新",
+      "backupLogTab": "备份日志",
+      "restoreLogTab": "还原日志",
+
+      "gridTableTitle": "备份文件",
+      "toolbarBackupData": "备份数据",
+
+      "emptyFile": "（文件为空）",
+      "noBackupLogs": "暂无备份日志文件",
+      "noRestoreLogs": "暂无还原日志文件",
+
+      "dataBackupForm": {
+        "dbInstanceLabel": "数据库实例",
+        "dbInstancePlaceholder": "-- 请选择或手动填写下方信息 --",
+        "backupTypeLabel": "备份类型",
+        "backupTypeFull": "全量备份",
+        "backupTypeIncremental": "增量备份",
+        "linkedFullJobLabel": "关联全量备份",
+        "linkedFullJobPlaceholder": "请选择一条全量备份记录作为增量基线",
+        "hostLabel": "数据库主机",
+        "hostPlaceholder": "127.0.0.1 或 MySQL 容器网段",
+        "portLabel": "端口",
+        "portPlaceholder": "3306",
+        "invalidPort": "请输入端口",
+        "userLabel": "用户名",
+        "userPlaceholder": "root",
+        "passwordLabel": "密码",
+        "passwordPlaceholder": "密码",
+        "databaseLabel": "数据库名",
+        "databasePlaceholder": "mall",
+        "cleanDaysLabel": "清理旧备份",
+        "cleanDaysSuffix": "天",
+        "tablesLabel": "仅备份指定表",
+        "tablesPlaceholder": "如 user,order 多个表用逗号分隔，留空=全部",
+        "ignoreTablesLabel": "不备份的表",
+        "ignoreTablesPlaceholder": "如 order_log 多个表用逗号分隔，留空=无",
+
+        "warningFillHostPortUserDb": "请填写数据库主机、端口、用户名、数据库名",
+        "warningImmediateBackupOnlyFull": "当前「立即备份」支持全量与增量。",
+        "warningSelectLinkedFull": "增量备份请先选择「关联全量备份」",
+        "warningSelectDbInstance": "请先在下拉框中选择「数据库实例」",
+        "connectSuccess": "连接成功",
+        "successSubmittingBackup": "正在备份数据中，任务已提交至后台执行",
+
+        "testConnection": "测试连接",
+        "executeBackup": "执行备份",
+        "allowAgainExecuteBackup": "允许再次执行备份"
+      },
+
+      "dataRestoreForm": {
+        "notice": "使用 myloader 将 mydumper 备份还原到指定实例；「备份文件」下拉数据与「备份文件」菜单列表一致（来自服务端记录）。",
+
+        "dbInstanceLabel": "数据库实例",
+        "dbInstancePlaceholder": "-- 请选择或手动填写下方信息 --",
+        "backupFileLabel": "备份文件",
+        "backupFilePlaceholder": "-- 请选择备份文件（与「备份文件」页列表一致）--",
+        "incrementalBackupFileLabel": "增量备份文件",
+        "incrementalBackupFilePlaceholder": "-- 可选：选择要回放到的增量备份（倒序）--",
+        "targetDbLabel": "目标数据库名",
+        "targetDbPlaceholder": "还原到该库（可与备份时库名不同）",
+
+        "hostLabel": "数据库主机",
+        "hostPlaceholder": "127.0.0.1 或 MySQL 容器网段",
+        "portLabel": "端口",
+        "portPlaceholder": "3306",
+        "invalidPort": "请输入端口",
+        "userLabel": "用户名",
+        "userPlaceholder": "root",
+        "passwordLabel": "密码",
+        "passwordPlaceholder": "密码",
+
+        "tablesLabel": "仅还原指定表",
+        "tablesPlaceholder": "如 user,order 多个表用逗号分隔，留空=全部",
+        "ignoreTablesLabel": "不还原的表",
+        "ignoreTablesPlaceholder": "如 order_log 多个表用逗号分隔，留空=无",
+
+        "warningFillHostPortUserTargetDb":
+          "请填写数据库主机、端口、用户名、目标数据库名",
+        "warningSelectDbInstance": "请先在下拉框中选择「数据库实例」",
+        "warningSelectBackupFile": "请选择备份文件",
+        "warningFillTargetDbName": "请填写目标数据库名",
+        "connectSuccess": "连接成功",
+        "successSubmittingRestore": "正在还原数据中，任务已提交至后台执行",
+
+        "testConnection": "测试连接",
+        "executeRestore": "执行还原",
+        "allowAgainExecuteRestore": "允许再次执行还原"
+      }
+    },
+
+    "jobSchedulePage": {
+      "keyword": "关键字",
+      "keywordPlaceholder": "任务名 / 表名 / 类型 / 实例 id",
+
+      "seq": "序号",
+      "taskName": "任务名称",
+      "dbInstance": "数据库实例",
+      "cron": "Cron 表达式",
+      "backupType": "备份类型",
+      "status": "状态",
+      "lastRunAt": "上次执行时间",
+      "operations": "操作",
+
+      "backupTypeFull": "全量备份",
+      "backupTypeIncremental": "增量备份",
+      "statusRunning": "运行",
+      "statusStopped": "停止",
+
+      "actionRun": "运行",
+      "actionStop": "停止",
+      "actionEdit": "编辑",
+      "actionDelete": "删除",
+      "actionLog": "日志",
+
+      "actionRunSuccess": "运行成功",
+      "actionStopSuccess": "停止成功",
+
+      "deleteSuccess": "删除成功",
+      "deleteFailed": "删除失败，请稍后重试",
+      "loadLogFailed": "加载日志失败",
+      "emptyLog": "(暂无日志)",
+
+      "editSuccess": "编辑成功",
+      "addSuccess": "新增成功",
+
+      "editTitle": "编辑任务调度",
+      "createTitle": "新增任务调度",
+      "toolbarAddTask": "新增任务",
+      "drawerLogTitle": "调度日志 - {0}",
+
+      "formTaskName": "调度任务名称",
+      "formTaskNamePlaceholder": "如：定时备份用户信息",
+      "formDbInstanceInfo": "数据库实例信息",
+      "formBackupType": "备份类型",
+      "formLinkedFullJob": "关联的全量任务",
+      "formCron": "Cron 表达式",
+      "cronInvalidHint": "Cron 表达式无效，请检查格式（例如 0 0 12 * * 表示每天 12:00 执行）",
+      "cronNotSetHint": "未设置调度策略，任务不会自动执行。",
+      "lastRunTimesHint": "最近 5 次预计运行时间：",
+      "cronExamplePlaceholder": "如 0 * * * * 每小时整点；0 1 * * * 每天 1 点",
+      "cleanDays": "清理天数",
+      "onlyBackupTables": "仅备份指定表",
+      "ignoreTables": "不备份的表",
+      "onlyBackupTablesPlaceholder": "如 user,order 多个表用逗号分割，留空则是备份全表",
+      "ignoreTablesPlaceholder": "如 order,log 多个表用逗号分割",
+
+      "currentDbInstanceInfo": "当前实例信息",
+      "instanceNameLabel": "实例名称：",
+      "hostLabel": "主机：",
+      "portLabel": "端口：",
+      "userLabel": "用户名：",
+      "databaseLabel": "数据库：",
+      "invalidSelectedInstance": "所选实例 id 不在当前实例列表中，请重新选择数据库实例。",
+
+      "requiredTaskName": "请输入调度任务名称",
+      "requiredDbInstance": "请选择数据库实例",
+      "requiredBackupType": "请选择备份类型",
+      "requiredLinkedFullJob": "请选择关联的全量任务",
+      "requiredCron": "请输入 Cron 表达式",
+      "requiredCleanDaysHint": "请输入要清理多少天之前的备份文件（0=不清理）",
+      "requiredOnlyBackupTables": "请选择仅备份指定表",
+      "requiredIgnoreTables": "请选择不备份的表",
+
+      "selectAll": "请选择关联的全量备份任务",
+      "selectOptionAll": "请选择"
+    }
+  }
+}

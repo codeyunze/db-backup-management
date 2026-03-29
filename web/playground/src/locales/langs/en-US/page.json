@@ -1,0 +1,302 @@
+{
+  "auth": {
+    "login": "Login",
+    "register": "Register",
+    "codeLogin": "Code Login",
+    "qrcodeLogin": "Qr Code Login",
+    "forgetPassword": "Forget Password",
+    "sendingCode": "SMS Code is sending...",
+    "codeSentTo": "Code has been sent to {0}",
+    "profile": "Profile"
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "analytics": "Analytics",
+    "workspace": "Workspace"
+  },
+  "backup": {
+    "management": "Backup Management",
+    "dbInstance": "Database Instances",
+    "backupFiles": "Backup Files",
+    "jobSchedule": "Job Scheduling",
+    "dbInstancePage": {
+      "management": "Database Instance Management",
+      "addInstance": "Add Instance",
+      "editButton": "Edit",
+      "deleteButton": "Delete",
+      "operations": "Operations",
+
+      "keyword": "Keyword",
+      "keywordPlaceholder": "Name / Host / Database",
+
+      "seq": "No.",
+      "instanceName": "Instance Name",
+      "host": "Host",
+      "port": "Port",
+      "databaseName": "Database Name",
+      "userName": "Username",
+      "password": "Password",
+
+      "createTitle": "Add Database Instance",
+      "editTitle": "Edit Database Instance",
+
+      "requiredInstanceName": "Please enter instance name",
+      "requiredDatabaseName": "Please enter database name",
+      "requiredHost": "Please enter host address",
+      "requiredPort": "Please enter port",
+      "requiredUserName": "Please enter username",
+      "requiredPassword": "Please enter password",
+
+      "testConnection": "Test Connection",
+      "connectSuccess": "Connection successful",
+
+      "deleteTitle": "Confirm Delete",
+      "deleteContent": "Are you sure to delete database instance “{0}”?",
+      "createSuccess": "Added successfully",
+      "editSuccess": "Edited successfully",
+      "deleteSuccess": "Deleted successfully"
+    },
+    "backupFilesPage": {
+      "keyword": "Keyword",
+      "keywordPlaceholder": "Database name / Directory name / Path",
+
+      "seq": "No.",
+      "databaseName": "Database Name",
+      "dirName": "Directory Name",
+      "backupTime": "Backup Time",
+      "fileSize": "File Size",
+      "operations": "Operations",
+
+      "actionTables": "View Tables",
+      "actionViewIncrement": "Incremental Backup",
+      "actionLogs": "Logs",
+      "actionDownload": "Download",
+      "actionRestore": "Data Restore",
+
+      "showTotal": "Total {0} items",
+
+      "loadLogsFailed": "Failed to load logs",
+      "refreshLogsSuccess": "Logs refreshed",
+      "refreshLogsFailed": "Failed to refresh logs",
+      "loadBackupObjectsFailed": "Failed to load backup objects list",
+      "downloadStarted": "Download started",
+      "downloadFailed": "Download failed",
+
+      "confirmDeleteTitle": "Confirm Delete",
+      "confirmDeleteContent":
+        "Are you sure to delete backup “{0}”? It will also delete the parsed backup directory on the server (if the directory doesn't exist, only the record will be deleted).",
+      "deleteSuccess": "Deleted successfully",
+
+      "drawerBackupDataTitle": "Backup Data",
+      "drawerRestoreDataTitle": "Data Restore",
+      "drawerIncrementTitle": "Incremental Backup Records",
+      "startIncrementBackup": "Start Backup",
+      "drawerTablesTitle": "Backed up Tables and Views",
+      "drawerLogsTitle": "Backup / Restore Logs",
+      "binlogRange": "Binlog Range",
+
+      "tablesKindTable": "Table",
+      "tablesKindView": "View",
+
+      "type": "Type",
+      "schema": "Schema",
+      "name": "Name",
+      "rows": "Rows",
+
+      "directory": "Directory",
+      "database": "Database",
+      "total": "Total",
+      "tablesCountSuffix": " tables,",
+      "viewsCountSuffix": " views",
+      "sourceLabel": "Source",
+      "sourceFromFilenames":
+        "Inferred from file names under the data directory (.sql.zst), no full metadata available",
+      "sourceFromMydumper": "mydumper metadata",
+
+      "tabAll": "All",
+      "tabTable": "Tables",
+      "tabView": "Views",
+
+      "refresh": "Refresh",
+      "backupLogTab": "Backup Logs",
+      "restoreLogTab": "Restore Logs",
+
+      "gridTableTitle": "Backup Files",
+      "toolbarBackupData": "Backup Data",
+
+      "emptyFile": "(file is empty)",
+      "noBackupLogs": "No backup log files",
+      "noRestoreLogs": "No restore log files",
+
+      "dataBackupForm": {
+        "dbInstanceLabel": "Database Instance",
+        "dbInstancePlaceholder": "-- Select or manually fill the information below --",
+        "backupTypeLabel": "Backup Type",
+        "backupTypeFull": "Full Backup",
+        "backupTypeIncremental": "Incremental Backup",
+        "linkedFullJobLabel": "Linked Full Backup",
+        "linkedFullJobPlaceholder":
+          "Select one full backup record as the incremental baseline",
+        "hostLabel": "Database Host",
+        "hostPlaceholder": "127.0.0.1 or MySQL container network segment",
+        "portLabel": "Port",
+        "portPlaceholder": "3306",
+        "invalidPort": "Please enter port",
+        "userLabel": "Username",
+        "userPlaceholder": "root",
+        "passwordLabel": "Password",
+        "passwordPlaceholder": "Password",
+        "databaseLabel": "Database Name",
+        "databasePlaceholder": "mall",
+        "cleanDaysLabel": "Clean Old Backups",
+        "cleanDaysSuffix": "days",
+        "tablesLabel": "Tables to Back Up",
+        "tablesPlaceholder": "e.g. user,order (comma-separated), leave empty = all",
+        "ignoreTablesLabel": "Tables Not to Back Up",
+        "ignoreTablesPlaceholder":
+          "e.g. order_log (comma-separated), leave empty = none",
+
+        "warningFillHostPortUserDb":
+          "Please fill in database host, port, username, and database name",
+        "warningImmediateBackupOnlyFull":
+          "The “Immediate Backup” supports both full and incremental backups.",
+        "warningSelectLinkedFull":
+          "Please select “Linked Full Backup” for incremental backup",
+        "warningSelectDbInstance": "Please select “Database Instance” first",
+        "connectSuccess": "Connection successful",
+        "successSubmittingBackup":
+          "Backing up data... The task has been submitted to the background",
+
+        "testConnection": "Test Connection",
+        "executeBackup": "Execute Backup",
+        "allowAgainExecuteBackup": "Allow executing backup again"
+      },
+
+      "dataRestoreForm": {
+        "notice":
+          "Use myloader to restore the mydumper backup to the target instance; the “Backup File” dropdown data matches the “Backup Files” menu list (from server records).",
+
+        "dbInstanceLabel": "Database Instance",
+        "dbInstancePlaceholder": "-- Select or manually fill the information below --",
+        "backupFileLabel": "Backup File",
+        "backupFilePlaceholder":
+          "-- Select a backup file (same list as the “Backup Files” page) --",
+        "incrementalBackupFileLabel": "Incremental Backup File",
+        "incrementalBackupFilePlaceholder":
+          "-- Optional: select an incremental backup to replay to (descending) --",
+        "targetDbLabel": "Target Database Name",
+        "targetDbPlaceholder":
+          "Restore to this database (may differ from the backup's database name)",
+
+        "hostLabel": "Database Host",
+        "hostPlaceholder": "127.0.0.1 or MySQL container network segment",
+        "portLabel": "Port",
+        "portPlaceholder": "3306",
+        "invalidPort": "Please enter port",
+        "userLabel": "Username",
+        "userPlaceholder": "root",
+        "passwordLabel": "Password",
+        "passwordPlaceholder": "Password",
+
+        "tablesLabel": "Tables to Restore",
+        "tablesPlaceholder": "e.g. user,order (comma-separated), leave empty = all",
+        "ignoreTablesLabel": "Tables Not to Restore",
+        "ignoreTablesPlaceholder":
+          "e.g. order_log (comma-separated), leave empty = none",
+
+        "warningFillHostPortUserTargetDb":
+          "Please fill in database host, port, username, and target database name",
+        "warningSelectDbInstance": "Please select “Database Instance” first",
+        "warningSelectBackupFile": "Please select a backup file",
+        "warningFillTargetDbName": "Please fill in the target database name",
+        "connectSuccess": "Connection successful",
+        "successSubmittingRestore":
+          "Restoring data... The task has been submitted to the background",
+
+        "testConnection": "Test Connection",
+        "executeRestore": "Execute Restore",
+        "allowAgainExecuteRestore": "Allow executing restore again"
+      }
+    },
+    "jobSchedulePage": {
+      "keyword": "Keyword",
+      "keywordPlaceholder": "Task name / Table name / Type / Instance id",
+
+      "seq": "No.",
+      "taskName": "Task Name",
+      "dbInstance": "Database Instance",
+      "cron": "Cron Expression",
+      "backupType": "Backup Type",
+      "status": "Status",
+      "lastRunAt": "Last Execution Time",
+      "operations": "Operations",
+
+      "backupTypeFull": "Full Backup",
+      "backupTypeIncremental": "Incremental Backup",
+      "statusRunning": "Running",
+      "statusStopped": "Stopped",
+
+      "actionRun": "Run",
+      "actionStop": "Stop",
+      "actionEdit": "Edit",
+      "actionDelete": "Delete",
+      "actionLog": "Logs",
+
+      "actionRunSuccess": "Run successful",
+      "actionStopSuccess": "Stop successful",
+
+      "deleteSuccess": "Deleted successfully",
+      "deleteFailed": "Delete failed. Please try again.",
+      "loadLogFailed": "Failed to load logs",
+      "emptyLog": "(no logs)",
+
+      "editSuccess": "Edited successfully",
+      "addSuccess": "Added successfully",
+
+      "editTitle": "Edit Task Scheduling",
+      "createTitle": "Add Task Scheduling",
+      "toolbarAddTask": "Add Task",
+      "drawerLogTitle": "Scheduling Logs - {0}",
+
+      "formTaskName": "Task Name",
+      "formTaskNamePlaceholder": "e.g. Scheduled backup for user data",
+      "formDbInstanceInfo": "Database Instance Info",
+      "formBackupType": "Backup Type",
+      "formLinkedFullJob": "Linked Full Backup Job",
+      "formCron": "Cron Expression",
+      "cronInvalidHint":
+        "Invalid Cron expression. Please check the format (e.g. “0 0 12 * *” means execute daily at 12:00).",
+      "cronNotSetHint": "No scheduling strategy set, the task won't run automatically.",
+      "lastRunTimesHint": "Next 5 scheduled run times:",
+      "cleanDays": "Clean Days",
+      "onlyBackupTables": "Tables to Back Up",
+      "onlyBackupTablesPlaceholder":
+        "e.g. user,order (comma-separated), leave empty = all",
+      "ignoreTables": "Tables Not to Back Up",
+      "ignoreTablesPlaceholder": "e.g. order,log (comma-separated)",
+
+      "requiredTaskName": "Please enter the task name",
+      "requiredDbInstance": "Please select the database instance",
+      "requiredBackupType": "Please select the backup type",
+      "requiredLinkedFullJob": "Please select the linked full backup job",
+      "requiredCron": "Please enter the Cron expression",
+      "requiredCleanDaysHint": "Please enter how many days ago backups to clean (0=do not clean)",
+      "requiredOnlyBackupTables": "Please select tables to back up",
+      "requiredIgnoreTables": "Please select tables not to back up",
+
+      "selectAll": "Please select the linked full backup job",
+      "selectOptionAll": "Please select",
+
+      "currentDbInstanceInfo": "Current Instance Info",
+      "instanceNameLabel": "Instance Name:",
+      "hostLabel": "Host:",
+      "portLabel": "Port:",
+      "userLabel": "Username:",
+      "databaseLabel": "Database:",
+      "invalidSelectedInstance":
+        "The selected instance id is not in the current instance list. Please select again.",
+
+      "cronExamplePlaceholder": "e.g. 0 * * * * run every hour; 0 1 * * * run every day at 1 AM"
+    }
+  }
+}
