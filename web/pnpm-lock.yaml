@@ -102,6 +102,9 @@ catalogs:
     '@types/node':
       specifier: ^24.10.1
       version: 24.10.4
+    '@types/node-forge':
+      specifier: ^1.3.11
+      version: 1.3.14
     '@types/nprogress':
       specifier: ^0.2.3
       version: 0.2.3
@@ -315,6 +318,9 @@ catalogs:
     nitropack:
       specifier: ^2.11.13
       version: 2.12.9
+    node-forge:
+      specifier: ^1.3.1
+      version: 1.3.3
     nprogress:
       specifier: ^0.2.0
       version: 0.2.0
@@ -1895,6 +1901,9 @@ importers:
       json-bigint:
         specifier: 'catalog:'
         version: 1.0.0
+      node-forge:
+        specifier: 'catalog:'
+        version: 1.3.3
       pinia:
         specifier: ^3.0.3
         version: 3.0.4(typescript@5.9.3)(vue@3.5.26(typescript@5.9.3))
@@ -1908,6 +1917,9 @@ importers:
       '@types/json-bigint':
         specifier: 'catalog:'
         version: 1.0.4
+      '@types/node-forge':
+        specifier: 'catalog:'
+        version: 1.3.14
 
   scripts/turbo-run:
     dependencies:
@@ -4270,6 +4282,9 @@ packages:
 
   '@types/ms@2.1.0':
     resolution: {integrity: sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==}
+
+  '@types/node-forge@1.3.14':
+    resolution: {integrity: sha512-mhVF2BnD4BO+jtOp7z1CdzaK4mbuK0LLQYAvdOLqHTavxFNq4zA1EmYkpnFjP8HOUzedfQkRnp0E2ulSAYSzAw==}
 
   '@types/node@12.20.55':
     resolution: {integrity: sha512-J8xLz7q2OFulZ2cyGTLE1TbbZcjpno7FaN6zdJNrgAdrJ+DZzh/uFR6YrTb4C+nXakvud8Q4+rbhoIWlYQbUFQ==}
@@ -12928,6 +12943,10 @@ snapshots:
   '@types/minimatch@3.0.5': {}
 
   '@types/ms@2.1.0': {}
+
+  '@types/node-forge@1.3.14':
+    dependencies:
+      '@types/node': 25.0.3
 
   '@types/node@12.20.55': {}
 
