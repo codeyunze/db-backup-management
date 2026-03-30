@@ -1,9 +1,23 @@
+import { createRequire } from 'node:module';
+
 import { defineConfig } from '@vben/vite-config';
+
+/** pnpm 下 Rollup 偶发无法解析裸 specifier `node-forge`，显式落到真实入口（与 Docker/CI 一致） */
+const require = createRequire(import.meta.url);
+const nodeForgeEntry = require.resolve('node-forge');
 
 export default defineConfig(async () => {
   return {
     application: {},
     vite: {
+      optimizeDeps: {
+        include: ['node-forge'],
+      },
+      resolve: {
+        alias: {
+          'node-forge': nodeForgeEntry,
+        },
+      },
       server: {
         proxy: {
           '/api/db-instances': {

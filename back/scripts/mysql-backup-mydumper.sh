@@ -313,8 +313,9 @@ if ! command -v "${MYDUMPER_BIN}" >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ ! -d "${BACKUP_ROOT}" ]; then
-  echo "错误: 备份根目录不存在: ${BACKUP_ROOT}"
+# 与后端 BACK_DIR/data 一致：新部署时该目录常不存在，仅 json/ 会先被写入，须自动创建
+if ! mkdir -p "${BACKUP_ROOT}"; then
+  echo "错误: 无法创建备份根目录: ${BACKUP_ROOT}"
   exit 1
 fi
 

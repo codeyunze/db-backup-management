@@ -1583,14 +1583,23 @@ def _background_backup_job(
             check=False,
         )
     except subprocess.TimeoutExpired:
+        print(
+            f"[backup] timeout session={session_dir_name!r} timeout={timeout_seconds}s",
+            flush=True,
+        )
         _remove_backup_file_by_dir_name(session_dir_name)
         return
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[backup] subprocess error session={session_dir_name!r}: {exc}",
+            flush=True,
+        )
         _remove_backup_file_by_dir_name(session_dir_name)
         return
 
     assert proc is not None
     stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
 
     if proc.returncode != 0:
         parsed_dir_on_fail = (
@@ -1605,6 +1614,12 @@ def _background_backup_job(
             except Exception:  # noqa: BLE001
                 pass
             return
+        print(
+            f"[backup] script failed rc={proc.returncode} session={session_dir_name!r}\n"
+            f"stdout tail: {stdout[-4000:]!s}\n"
+            f"stderr tail: {stderr[-2000:]!s}",
+            flush=True,
+        )
         _remove_backup_file_by_dir_name(session_dir_name)
         return
 
@@ -2006,6 +2021,10 @@ def _start_backup_for_instance(instance: dict, payload: dict) -> tuple[bool, Any
     backup_root = backup_dir or _DEFAULT_BACKUP_ROOT
     if not os.path.isabs(backup_root):
         backup_root = os.path.abspath(os.path.join(BACK_DIR, backup_root))
+    try:
+        os.makedirs(backup_root, mode=0o755, exist_ok=True)
+    except OSError as exc:
+        return False, f"无法创建备份根目录 {backup_root}: {exc}", 500
     session_dir_name = f"{db_name}_{time.strftime('%Y%m%d_%H%M%S')}"
     try:
         full_path = os.path.normpath(os.path.join(backup_root, session_dir_name))
@@ -2171,7 +2190,7 @@ def _start_backup_for_instance(instance: dict, payload: dict) -> tuple[bool, Any
             "full_path": full_path,
             "timeout_seconds": timeout_seconds,
         },
-        daemon=True,
+        daemon=False,
         name=f"backup-{session_dir_name}",
     ).start()
 
@@ -3300,5 +3319,27 @@ if __name__ == "__main__":
                 _sync_job_crontab(j)
         except Exception:  # noqa: BLE001
             pass
-    app.run(host="0.0.0.0", port=8081, debug=True)
+    for _startup_dir in (
+        JSON_DIR,
+        _DEFAULT_BACKUP_ROOT,
+        JOBS_DIR,
+        JOB_SCRIPT_LOGS_DIR,
+    ):
+        try:
+            os.makedirs(_startup_dir, mode=0o755, exist_ok=True)
+        except OSError:
+            pass
+    # 生产镜像默认关闭 debug/reloader：reloader 多进程下后台备份线程行为易异常
+    _flask_debug = os.environ.get("FLASK_DEBUG", "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("FLASK_RUN_PORT") or "8081"),
+        debug=_flask_debug,
+        use_reloader=_flask_debug,
+    )
 
