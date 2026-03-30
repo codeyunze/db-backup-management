@@ -1444,41 +1444,50 @@ def _mysql_show_master_status(instance: dict) -> tuple[Optional[str], Optional[i
         return None, None, "未找到 mysql/mariadb 客户端"
     env = os.environ.copy()
     env["MYSQL_PWD"] = str(instance.get("password") or "")
-    cmd = [
-        client_bin,
-        "-h",
-        str(instance.get("host") or ""),
-        "-P",
-        str(instance.get("port") or ""),
-        "-u",
-        str(instance.get("user") or ""),
-        "-N",
-        "-e",
-        "SHOW MASTER STATUS",
-    ]
-    try:
-        proc = subprocess.run(
-            cmd,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return None, None, "获取 binlog 位点超时"
-    if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout or "").strip()
-        return None, None, (err or "获取 binlog 位点失败")
-    line = ((proc.stdout or "").strip().splitlines() or [""])[0]
-    parts = [x for x in line.split("\t") if x != ""]
-    if len(parts) < 2:
-        return None, None, "未获取到 MASTER STATUS"
-    file_name = parts[0].strip()
-    pos = _to_int(parts[1], 0)
-    if not file_name or pos <= 0:
-        return None, None, "MASTER STATUS 无效"
-    return file_name, pos, None
+    def _run_status_sql(sql: str) -> tuple[Optional[str], Optional[int], Optional[str]]:
+        cmd = [
+            client_bin,
+            "-h",
+            str(instance.get("host") or ""),
+            "-P",
+            str(instance.get("port") or ""),
+            "-u",
+            str(instance.get("user") or ""),
+            "-N",
+            "-e",
+            sql,
+        ]
+        try:
+            proc = subprocess.run(
+                cmd,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return None, None, "获取 binlog 位点超时"
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout or "").strip()
+            return None, None, (err or f"执行失败: {sql}")
+        line = ((proc.stdout or "").strip().splitlines() or [""])[0]
+        parts = [x for x in line.split("\t") if x != ""]
+        if len(parts) < 2:
+            return None, None, f"未获取到位点: {sql}"
+        file_name = parts[0].strip()
+        pos = _to_int(parts[1], 0)
+        if not file_name or pos <= 0:
+            return None, None, f"位点无效: {sql}"
+        return file_name, pos, None
+
+    # 新版语法优先（MySQL 8.4+），旧版语法兜底
+    for sql in ("SHOW BINARY LOG STATUS", "SHOW MASTER STATUS"):
+        file_name, pos, err = _run_status_sql(sql)
+        if not err:
+            return file_name, pos, None
+        last_err = err
+    return None, None, (last_err or "获取 binlog 位点失败")
 
 
 def _extract_source_log_point_from_metadata(
