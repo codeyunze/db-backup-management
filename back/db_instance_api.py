@@ -43,15 +43,13 @@ import re
 import shlex
 import shutil
 import subprocess
-import tarfile
-import tempfile
 import threading
 import time
 import uuid
 from typing import Any, Optional, Tuple
 from urllib.parse import unquote
 
-from flask import Flask, Response, after_this_request, jsonify, request, send_file
+from flask import Flask, Response, jsonify, request, stream_with_context
 from werkzeug.utils import secure_filename
 
 # --- 登录密码加密（RSA-OAEP-SHA256）---
@@ -3303,7 +3301,7 @@ def get_backup_file_logs(dir_name: str):
 
 @app.route("/api/backup-files/<path:dir_name>/download", methods=["GET"])
 def download_backup_file(dir_name: str):
-    """下载该条记录 backupDir 对应目录的打包文件（tar.gz）。"""
+    """下载该条记录 backupDir 对应目录的打包文件（tar.gz，流式输出）。"""
     _target, resolved, err = _get_backup_record_and_resolved_dir(dir_name)
     if err:
         status = 400
@@ -3326,40 +3324,50 @@ def download_backup_file(dir_name: str):
     if (_target.get("account_id") or "").strip() != (current_account_id or "").strip():
         return _error("备份记录不存在", http_status=404)
 
-    fd, tmp_path = tempfile.mkstemp(suffix=".tar.gz")
-    os.close(fd)
-    try:
-        with tarfile.open(tmp_path, "w:gz") as tar:
-            tar.add(
-                resolved,
-                arcname=os.path.basename(resolved.rstrip(os.sep)),
-                recursive=True,
-            )
-    except OSError as exc:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        return _error(f"打包失败: {exc}", http_status=500)
-
     safe_name = secure_filename(str(_target.get("dirName") or dir_name)) or "backup"
     download_name = f"{safe_name}_backup.tar.gz"
+    base_dir = os.path.dirname(resolved.rstrip(os.sep))
+    leaf_name = os.path.basename(resolved.rstrip(os.sep))
+    tar_bin = shutil.which("tar")
+    if not tar_bin:
+        return _error("未找到 tar 命令，无法下载打包", http_status=500)
 
-    @after_this_request
-    def _remove_tmp(response: Response) -> Response:
+    def _tar_stream():
+        proc = subprocess.Popen(
+            [tar_bin, "-czf", "-", "-C", base_dir, leaf_name],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
         try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        return response
+            assert proc.stdout is not None
+            while True:
+                chunk = proc.stdout.read(64 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                if proc.stdout:
+                    proc.stdout.close()
+            except OSError:
+                pass
+            try:
+                if proc.stderr:
+                    err = proc.stderr.read()
+                    if err:
+                        print(f"[download] tar stderr: {err.decode('utf-8', errors='replace')}", flush=True)
+            except OSError:
+                pass
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
-    return send_file(
-        tmp_path,
-        as_attachment=True,
-        download_name=download_name,
-        mimetype="application/gzip",
-        max_age=0,
-    )
+    resp = Response(stream_with_context(_tar_stream()), mimetype="application/gzip")
+    resp.headers["Content-Disposition"] = f'attachment; filename="{download_name}"'
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["X-Accel-Buffering"] = "no"
+    return resp
 
 
 if __name__ == "__main__":
