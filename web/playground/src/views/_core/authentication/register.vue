@@ -101,7 +101,6 @@ async function handleSubmit(value: Recordable<any>) {
       username: String(value.username || ''),
       encryptedPassword,
       keyId: rsa.keyId,
-      // 不发送明文密码
       password: undefined,
     });
     message.success('注册成功，请登录');

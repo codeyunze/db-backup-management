@@ -42,10 +42,10 @@ export const useAuthStore = defineStore('auth', () => {
     let userInfo: null | UserInfo = null;
     try {
       loginLoading.value = true;
+
       const username = String(params?.username ?? '');
       const password = String(params?.password ?? '');
 
-      // 获取 RSA 临时公钥，前端加密后提交，避免明文密码上传
       const rsa = await getLoginRsaKeyApi();
       const encryptedPassword = await rsaOaepEncryptBase64(
         rsa.publicKey,
@@ -56,7 +56,6 @@ export const useAuthStore = defineStore('auth', () => {
         ...params,
         encryptedPassword,
         keyId: rsa.keyId,
-        // 不发送明文 password
         password: undefined,
         username,
       });
@@ -90,6 +89,21 @@ export const useAuthStore = defineStore('auth', () => {
           });
         }
       }
+    } catch (e: unknown) {
+      const isAxios =
+        typeof e === 'object' &&
+        e !== null &&
+        'isAxiosError' in e &&
+        (e as { isAxiosError?: boolean }).isAxiosError === true;
+      // Axios 错误通常已由请求拦截器 message.error，避免重复弹窗
+      if (!isAxios) {
+        notification.error({
+          message: '登录失败',
+          description: e instanceof Error ? e.message : String(e),
+          duration: 6,
+        });
+      }
+      throw e;
     } finally {
       loginLoading.value = false;
     }
