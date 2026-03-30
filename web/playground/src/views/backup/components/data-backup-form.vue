@@ -237,7 +237,7 @@ const [BackupForm, formApi] = useVbenForm({
         ),
       },
       fieldName: 'database',
-      formItemClass: 'col-span-1',
+      formItemClass: 'col-span-1 md:col-span-2',
       label: $t('page.backup.backupFilesPage.dataBackupForm.databaseLabel'),
       rules: 'required',
     },

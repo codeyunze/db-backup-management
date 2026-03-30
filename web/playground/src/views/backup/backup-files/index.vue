@@ -256,7 +256,7 @@ const objectTableColumns = [
     title: $t('page.backup.backupFilesPage.schema'),
     dataIndex: 'schema',
     key: 'schema',
-    width: 100,
+    width: 140,
   },
   {
     title: $t('page.backup.backupFilesPage.name'),

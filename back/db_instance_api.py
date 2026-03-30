@@ -1587,14 +1587,24 @@ def _background_backup_job(
             f"[backup] timeout session={session_dir_name!r} timeout={timeout_seconds}s",
             flush=True,
         )
-        _remove_backup_file_by_dir_name(session_dir_name)
+        _mark_backup_file_failed(
+            dir_name=session_dir_name,
+            backup_dir_path=full_path,
+            exit_code=None,
+            error_summary=f"timeout {timeout_seconds}s",
+        )
         return
     except Exception as exc:  # noqa: BLE001
         print(
             f"[backup] subprocess error session={session_dir_name!r}: {exc}",
             flush=True,
         )
-        _remove_backup_file_by_dir_name(session_dir_name)
+        _mark_backup_file_failed(
+            dir_name=session_dir_name,
+            backup_dir_path=full_path,
+            exit_code=None,
+            error_summary=str(exc),
+        )
         return
 
     assert proc is not None
@@ -1620,7 +1630,12 @@ def _background_backup_job(
             f"stderr tail: {stderr[-2000:]!s}",
             flush=True,
         )
-        _remove_backup_file_by_dir_name(session_dir_name)
+        _mark_backup_file_failed(
+            dir_name=session_dir_name,
+            backup_dir_path=parsed_dir_on_fail,
+            exit_code=proc.returncode,
+            error_summary="mydumper failed, see logs",
+        )
         return
 
     parsed_dir = (_extract_backup_output_dir_from_script_log(stdout) or "").strip() or full_path
@@ -1733,7 +1748,7 @@ def _update_backup_file_record_size(
     dir_name: str,
     backup_dir_path: str,
 ) -> Optional[dict]:
-    """备份成功后更新对应记录的 size（及 backupDir，以日志解析路径为准）。"""
+    """备份成功后更新对应记录的 size（及 backupDir，以日志解析路径为准），并标记状态为 success。"""
     dir_name = (dir_name or "").strip()
     backup_dir_path = (backup_dir_path or "").strip()
     if not dir_name or not backup_dir_path:
@@ -1747,6 +1762,9 @@ def _update_backup_file_record_size(
                 continue
             merged = {
                 **x,
+                "status": "success",
+                "lastExitCode": 0,
+                "lastError": "",
                 "backupDir": backup_dir_path,
                 "size": size,
             }
@@ -1759,15 +1777,42 @@ def _update_backup_file_record_size(
     return out
 
 
-def _remove_backup_file_by_dir_name(dir_name: str) -> None:
-    """备份失败或超时：移除预登记记录。"""
+def _mark_backup_file_failed(
+    *,
+    dir_name: str,
+    backup_dir_path: str,
+    exit_code: Optional[int] = None,
+    error_summary: str = "",
+) -> Optional[dict]:
+    """
+    备份失败或超时：保留预登记记录，但标记状态为 failed，并附带错误摘要 / 退出码，便于排查。
+    size 仍为 0（或原值）。
+    """
     dir_name = (dir_name or "").strip()
     if not dir_name:
-        return
+        return None
+    backup_dir_path = (backup_dir_path or "").strip()
     with _file_lock:
         items = _load_backup_files()
-        items = [x for x in items if (x.get("dirName") or "").strip() != dir_name]
+        out: Optional[dict] = None
+        for i, x in enumerate(items):
+            if (x.get("dirName") or "").strip() != dir_name:
+                continue
+            merged = {
+                **x,
+                "status": "failed",
+                "lastExitCode": int(exit_code or 1),
+                "lastError": (error_summary or "").strip(),
+            }
+            if backup_dir_path:
+                merged["backupDir"] = backup_dir_path
+            items[i] = _normalize_backup_file(merged)
+            out = items[i]
+            break
+        if out is None:
+            return None
         _save_backup_files(items)
+    return out
 
 
 def _looks_like_backup_completed(

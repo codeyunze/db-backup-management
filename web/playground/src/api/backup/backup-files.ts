@@ -65,6 +65,9 @@ async function deleteBackupFile(dirName: string) {
 async function downloadBackupArchive(dirName: string) {
   return requestClient.download<Blob>(
     `/backup-files/${encodeURIComponent(dirName)}/download`,
+    // 下载文件可能需要明显超过默认 10s（打包 tar.gz + 传输）。
+    // 显式放大 timeout，避免点击无响应/被 axios 超时中断。
+    { timeout: 0 },
   );
 }
 

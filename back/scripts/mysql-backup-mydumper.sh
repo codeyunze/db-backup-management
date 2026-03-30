@@ -41,6 +41,14 @@ MAX_THREADS_PER_TABLE="${MAX_THREADS_PER_TABLE:-1}"
 # 输出压缩：mydumper 0.21.x 常用 zstd（与「默认 .sql.zst」一致，显式写出便于排查）
 COMPRESS="${COMPRESS:-zstd}"
 
+# 忽略存储引擎：透传给 mydumper --ignore-engines（逗号分隔，如 MyISAM）
+# 默认不忽略；可按需设置为 "MyISAM" 来跳过非事务引擎表，避免一致性锁/一致性问题。
+IGNORE_ENGINES="${IGNORE_ENGINES:-}"
+
+# 线程一致性锁同步模式：降低因 FTWRL/全局锁获取失败导致的 ERROR 1317 风险
+# mydumper 文档：SAFE_NO_LOCK 会尽量避免一致性同步时长时间持有全局锁。
+SYNC_THREAD_LOCK_MODE="${SYNC_THREAD_LOCK_MODE:-SAFE_NO_LOCK}"
+
 # 日志：留空则使用本次备份目录下的 backup.log
 LOG_FILE=""
 LOG_SIZE_LIMIT_MB=10
@@ -203,6 +211,7 @@ show_usage() {
   echo "      --session-dir  指定本次会话目录绝对路径（须位于 -b 根目录下；与自动时间戳二选一，供服务端预登记）"
   echo "  -t, --tables      仅备份指定表，逗号分隔"
   echo "  -i, --ignore      不备份的表，逗号分隔；仅 -i 时使用 mydumper --omit-from-file"
+  echo "      --ignore-engines 忽略的存储引擎列表，逗号分隔（传给 mydumper --ignore-engines）"
   echo "  -c, --clean       备份完成后清理 N 天前的同库备份目录（名称前缀 \${DB_NAME}_）"
   echo "      --threads     mydumper 线程数（默认 ${THREADS}）"
   echo "      --max-threads-per-table  单表并行线程上限（默认 ${MAX_THREADS_PER_TABLE}，建议保持 1 避免 file already open）"
@@ -282,6 +291,11 @@ while [ $# -gt 0 ]; do
     --compress)
       [ -n "${2:-}" ] || { echo "错误: --compress 需要参数"; exit 1; }
       COMPRESS="${2}"
+      shift 2
+      ;;
+    --ignore-engines)
+      [ -n "${2:-}" ] || { echo "错误: --ignore-engines 需要参数"; exit 1; }
+      IGNORE_ENGINES="${2}"
       shift 2
       ;;
     --session-dir)
@@ -423,7 +437,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-MYD_ARGS=(
+MYD_BASE_ARGS=(
   --host="${DB_HOST}"
   --port="${DB_PORT}"
   --user="${DB_USER}"
@@ -437,31 +451,70 @@ MYD_ARGS=(
   --verbose=2
 )
 
-# 压缩：none 时不传 --compress（若需完全明文可再配合版本文档调整）
-if [ -n "${COMPRESS}" ] && [ "${COMPRESS}" != "none" ]; then
-  MYD_ARGS+=(--compress="${COMPRESS}")
+# 锁同步策略：显式设置以避免默认 AUTO 在部分场景走到全局锁/FTWRL 路径
+if [ -n "${SYNC_THREAD_LOCK_MODE}" ]; then
+  MYD_BASE_ARGS+=(--sync-thread-lock-mode="${SYNC_THREAD_LOCK_MODE}")
 fi
 
-# 过滤策略：
-# - 仅 -i：omit-from-file，每行 database.table
-# - 含 -t：对最终对象列表使用 --tables-list（db.table,db.table）
-if [ -n "${TABLES_INCLUDE}" ]; then
-  TABLES_LIST=$(build_tables_list "${DB_NAME}" "${TABLES_FINAL}")
-  MYD_ARGS+=(--tables-list="${TABLES_LIST}")
-elif [ -n "${TABLES_EXCLUDE}" ]; then
-  OMIT_TMP=$(mktemp)
-  for ex in ${TABLES_EXCLUDE}; do
-    echo "${DB_NAME}.${ex}" >>"${OMIT_TMP}"
-  done
-  MYD_ARGS+=(--omit-from-file="${OMIT_TMP}")
+# 压缩：none 时不传 --compress（若需完全明文可再配合版本文档调整）
+if [ -n "${COMPRESS}" ] && [ "${COMPRESS}" != "none" ]; then
+  MYD_BASE_ARGS+=(--compress="${COMPRESS}")
 fi
+
+# 忽略引擎：跳过指定存储引擎表（如 MyISAM）
+if [ -n "${IGNORE_ENGINES}" ]; then
+  MYD_BASE_ARGS+=(--ignore-engines="${IGNORE_ENGINES}")
+fi
+
+split_list_intersection() {
+  local list_a="$1" list_b="$2" out="" a b
+  for a in ${list_a}; do
+    for b in ${list_b}; do
+      [ "${a}" = "${b}" ] || continue
+      out="${out} ${a}"
+      break
+    done
+  done
+  echo "${out}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+split_list_minus() {
+  local list_a="$1" list_b="$2" out="" a b skip
+  for a in ${list_a}; do
+    skip=0
+    for b in ${list_b}; do
+      [ "${a}" = "${b}" ] || continue
+      skip=1
+      break
+    done
+    [ "${skip}" -eq 1 ] && continue
+    out="${out} ${a}"
+  done
+  echo "${out}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+run_one_phase() {
+  local phase_title="$1"
+  shift
+  local args=("${MYD_BASE_ARGS[@]}" "$@")
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] 阶段: ${phase_title}"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] 执行: ${MYDUMPER_BIN} ${args[*]//--password=*/--password=***}"
+  "${MYDUMPER_BIN}" "${args[@]}"
+}
+
+# 检测 MyISAM 表（只看基表）；用于分两段备份：
+# 1) 先备份非 MyISAM
+# 2) 再单独备份 MyISAM（禁用 trx-tables）
+MYISAM_TABLES=$(${MYSQL_CMD} -e "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='${DB_NAME}' AND TABLE_TYPE='BASE TABLE' AND ENGINE='MyISAM';" 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//') || true
+MYISAM_FINAL=$(split_list_intersection "${TABLES_FINAL}" "${MYISAM_TABLES}")
+NON_MYISAM_FINAL=$(split_list_minus "${TABLES_FINAL}" "${MYISAM_FINAL}")
 
 # 清理 data 内上次中断遗留的裸 .sql（压缩管道临时文件）；与残留文件同开易触发 file already open
 if [ -d "${BACKUP_DIR}/data" ]; then
   find "${BACKUP_DIR}/data" -maxdepth 1 -type f -name '*.sql' ! -name '*.sql.zst' -delete 2>/dev/null || true
 fi
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] 执行: ${MYDUMPER_BIN} ${MYD_ARGS[*]//--password=*/--password=***}"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] 备份策略: ${MYISAM_FINAL:+分两段（非MyISAM + MyISAM）}${MYISAM_FINAL:-单段}"
 
 TABLE_MON_STOP="${BACKUP_DIR}/data/.table_monitor_stop"
 TABLE_MON_ABORT="${BACKUP_DIR}/data/.table_monitor_abort"
@@ -473,8 +526,52 @@ if [ "${DISABLE_TABLE_PROGRESS_MONITOR}" != "1" ]; then
 fi
 
 set +e
-"${MYDUMPER_BIN}" "${MYD_ARGS[@]}"
-MYD_EXIT=$?
+MYD_EXIT=0
+if [ -n "${MYISAM_FINAL}" ]; then
+  # 第一段：忽略 MyISAM（并保留用户显式的 --ignore-engines）
+  PHASE1_IGNORE="MyISAM"
+  if [ -n "${IGNORE_ENGINES}" ]; then
+    case ",${IGNORE_ENGINES}," in
+      *,MyISAM,*) PHASE1_IGNORE="${IGNORE_ENGINES}" ;;
+      *) PHASE1_IGNORE="${IGNORE_ENGINES},MyISAM" ;;
+    esac
+  fi
+  if [ -n "${NON_MYISAM_FINAL}" ]; then
+    PHASE1_TABLES_LIST=$(build_tables_list "${DB_NAME}" "${NON_MYISAM_FINAL}")
+    run_one_phase "phase1 非MyISAM" \
+      --ignore-engines="${PHASE1_IGNORE}" \
+      --tables-list="${PHASE1_TABLES_LIST}"
+    MYD_EXIT=$?
+  else
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] phase1 跳过：无非 MyISAM 表。"
+  fi
+  if [ "${MYD_EXIT}" -eq 0 ]; then
+    # 第二段：仅备份 MyISAM，禁用事务一致性模式
+    PHASE2_TABLES_LIST=$(build_tables_list "${DB_NAME}" "${MYISAM_FINAL}")
+    run_one_phase "phase2 MyISAM" \
+      --trx-tables=0 \
+      --sync-thread-lock-mode=NO_LOCK \
+      --tables-list="${PHASE2_TABLES_LIST}"
+    MYD_EXIT=$?
+  fi
+else
+  # 无 MyISAM：维持原有单段逻辑
+  if [ -n "${TABLES_INCLUDE}" ]; then
+    TABLES_LIST=$(build_tables_list "${DB_NAME}" "${TABLES_FINAL}")
+    run_one_phase "single 全量" --tables-list="${TABLES_LIST}"
+    MYD_EXIT=$?
+  elif [ -n "${TABLES_EXCLUDE}" ]; then
+    OMIT_TMP=$(mktemp)
+    for ex in ${TABLES_EXCLUDE}; do
+      echo "${DB_NAME}.${ex}" >>"${OMIT_TMP}"
+    done
+    run_one_phase "single 全量" --omit-from-file="${OMIT_TMP}"
+    MYD_EXIT=$?
+  else
+    run_one_phase "single 全量"
+    MYD_EXIT=$?
+  fi
+fi
 set -e
 
 if [ -n "${TABLE_MON_PID}" ]; then
