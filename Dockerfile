@@ -12,7 +12,10 @@
 # syntax=docker/dockerfile:1
 
 # ---------- 阶段 1：在容器内构建 playground（.env.production 中 VITE_GLOB_API_URL=/api） ----------
-FROM registry.cn-guangzhou.aliyuncs.com/devyunze/node:22.22-slim AS frontend-builder
+# 静态站点与目标 CPU 无关；多架构构建时若在此阶段跑 linux/arm64，会在 QEMU 下执行 pnpm/vite，
+# 极易 OOM 或异常退出。固定用构建机原生平台（Buildx 注入的 BUILDPLATFORM，Actions 上多为 amd64）。
+ARG BUILDPLATFORM
+FROM --platform=$BUILDPLATFORM registry.cn-guangzhou.aliyuncs.com/devyunze/node:22.22-slim AS frontend-builder
 
 ENV TZ=Asia/Shanghai \
     NODE_OPTIONS=--max-old-space-size=8192 \
